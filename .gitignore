@@ -1,3 +1,10 @@
 node_modules/
 dist/
 .vite/
+.env
+foraneo_flutter/.dart_tool/
+foraneo_flutter/build/
+foraneo_flutter/.idea/
+foraneo_flutter/.flutter-plugins
+foraneo_flutter/.flutter-plugins-dependencies
+foraneo_flutter/android/build/

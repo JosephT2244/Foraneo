@@ -15,6 +15,9 @@ import {
 const app = document.querySelector('#app');
 const STORAGE_KEY = 'foraneo-v2';
 const LEGACY_STORAGE_KEYS = ['casa-en-calma-v1'];
+const RECIPES_API_URL = import.meta.env.DEV
+  ? (import.meta.env.VITE_RECIPES_API_URL || '/api/recipes')
+  : (import.meta.env.VITE_RECIPES_API_URL || '');
 const DAYS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
 const MEALS = ['desayuno', 'comida', 'cena'];
 
@@ -60,6 +63,9 @@ function createDefaultState() {
     notificationOpen: false,
     pricePreview: null,
     scanResult: null,
+    aiRecipes: [],
+    aiQuery: null,
+    aiLoading: false,
     toast: null
   };
 }
@@ -88,6 +94,9 @@ function loadState() {
       notificationOpen: false,
       pricePreview: null,
       scanResult: null,
+      aiRecipes: [],
+      aiQuery: null,
+      aiLoading: false,
       toast: null
     });
   } catch (error) {
@@ -218,9 +227,18 @@ function getProduct(id) {
 }
 
 function getRecipe(id) {
-  return state.recipes.find(function (recipe) {
+  return state.recipes.concat(state.aiRecipes || []).find(function (recipe) {
     return recipe.id === id;
   });
+}
+
+function safeExternalUrl(value, fallback) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : fallback;
+  } catch (error) {
+    return fallback;
+  }
 }
 
 function safeRecipe(recipe) {
@@ -608,12 +626,18 @@ function renderRecipeCard(recipe) {
 }
 
 function renderScanResult() {
+  if (state.aiLoading) {
+    return '<div class="ai-result ai-loading"><span class="ai-sparkle">✦</span><div><p class="eyebrow">Foráneo IA está cocinando ideas</p><h4>Buscando recetas compatibles…</h4><p>Está creando opciones nuevas a partir de tu alimento, tu despensa y tus preferencias.</p></div></div>';
+  }
   if (!state.scanResult) return '';
   const result = state.scanResult;
-  return '<div class="ai-result"><span class="ai-sparkle">✦</span><div><p class="eyebrow">AromIA te propone</p><h4>' + escapeHtml(result.headline) + '</h4><p>' + escapeHtml(result.description) + '</p>' +
+  const source = result.source === 'openai' ? 'Foráneo IA · recetas nuevas' : 'Ideas guardadas de Foráneo';
+  return '<div class="ai-result' + (result.warning ? ' ai-result-warning' : '') + '"><span class="ai-sparkle">✦</span><div><p class="eyebrow">' + source + '</p><h4>' + escapeHtml(result.headline) + '</h4><p>' + escapeHtml(result.description) + '</p>' +
+    (result.warning ? '<p class="ai-warning">' + escapeHtml(result.warning) + '</p>' : '') +
     (result.recipes.length ? '<div class="ai-recipe-pills">' + result.recipes.map(function (recipe) {
       return '<button data-action="open-recipe-details" data-id="' + recipe.id + '">' + escapeHtml(recipe.title) + ' →</button>';
     }).join('') + '</div>' : '') +
+    (result.source === 'openai' ? '<button class="text-button ai-more-button" data-action="ask-for-more">✦ Dame otras recetas</button>' : '') +
   '</div></div>';
 }
 
@@ -638,9 +662,9 @@ function renderPlanner() {
 function renderKitchen() {
   const recipes = recommendedRecipes();
   return '<section class="page-section page-enter">' +
-    '<div class="section-title-row"><div><p class="eyebrow">Cocina con lo que tienes</p><h2>Ideas para hoy</h2><p>AromIA considera tu despensa y omite preparaciones de huevo o arroz que no te gustan.</p></div>' +
+    '<div class="section-title-row"><div><p class="eyebrow">Cocina con lo que tienes</p><h2>Ideas para hoy</h2><p>Foráneo IA considera tu despensa y omite preparaciones de huevo o arroz que no te gustan.</p></div>' +
       '<button class="primary-button" data-action="open-recipe-modal">＋ Crear receta</button></div>' +
-    '<section class="ai-scanner"><div class="scanner-art"><img src="https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=900&q=85" alt="Ingredientes frescos sobre una mesa" /><span>✦</span></div><div class="scanner-copy"><p class="eyebrow">AromIA · asistente de cocina</p><h3>Cuéntame qué alimento tienes</h3><p>Analizo su nombre y descripción para proponerte combinaciones que sí quieres comer.</p><form id="food-scan-form"><input name="name" required placeholder="Ej. pasta fusilli" /><textarea name="description" placeholder="Descripción opcional del producto"></textarea><button class="soft-button" type="submit">Analizar ingrediente →</button></form></div></section>' +
+    '<section class="ai-scanner"><div class="scanner-art"><img src="https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=900&q=85" alt="Ingredientes frescos sobre una mesa" /><span>✦</span></div><div class="scanner-copy"><p class="eyebrow">Foráneo IA · asistente de cocina</p><h3>Cuéntame qué alimento tienes</h3><p>Genera recetas nuevas bajo demanda; cada búsqueda puede darte más opciones sin límite práctico.</p><form id="food-scan-form"><input name="name" required placeholder="Ej. pasta fusilli" value="' + escapeAttr(state.aiQuery ? state.aiQuery.name : '') + '" /><textarea name="description" placeholder="Descripción opcional del producto">' + escapeHtml(state.aiQuery ? state.aiQuery.description : '') + '</textarea><button class="soft-button" type="button" data-action="ask-recipes"' + (state.aiLoading ? ' disabled' : '') + '>' + (state.aiLoading ? 'Buscando recetas…' : 'Pedir recetas a IA →') + '</button></form></div></section>' +
     renderScanResult() +
     '<div class="recipe-section-title"><div><h3>Lo mejor para tu despensa</h3><p>Ordenado por los ingredientes que ya están contigo.</p></div><span class="safe-filter">✓ Filtros de preferencias activos</span></div>' +
     '<div class="recipe-grid">' + recipes.map(renderRecipeCard).join('') + '</div>' +
@@ -703,13 +727,19 @@ function renderRecipeModal() {
 }
 
 function renderRecipeDetailModal(recipe) {
+  if (!recipe) {
+    return '<div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true"><button class="modal-close" data-action="close-modal" aria-label="Cerrar">×</button><h2>Receta no disponible</h2><p class="modal-description">Vuelve a pedir recomendaciones para ver esta receta.</p></section></div>';
+  }
   const coverage = recipeCoverage(recipe);
+  const saveButton = recipe.source === 'ai'
+    ? '<button class="soft-button" data-action="save-ai-recipe" data-id="' + recipe.id + '">＋ Guardar receta</button>'
+    : '';
   return '<div class="modal-backdrop"><section class="modal-card recipe-detail-modal" role="dialog" aria-modal="true" aria-labelledby="recipe-detail-title"><button class="modal-close" data-action="close-modal" aria-label="Cerrar">×</button><img class="detail-recipe-image" src="' + escapeAttr(recipe.image) + '" alt="Foto de ' + escapeAttr(recipe.title) + '" /><div class="detail-recipe-copy"><span class="recipe-tag">' + escapeHtml(recipe.tag || 'Receta') + '</span><h2 id="recipe-detail-title">' + escapeHtml(recipe.title) + '</h2><p>' + escapeHtml(recipe.description) + '</p><div class="detail-meta"><span>◷ ' + escapeHtml(recipe.time) + '</span><span>◌ ' + recipe.servings + ' porciones</span></div><div class="recipe-detail-columns"><div><h4>Ingredientes</h4><ul class="ingredients-list">' + recipe.ingredients.map(function (ingredient) {
     const inHome = coverage.available.includes(ingredient);
     return '<li class="' + (inHome ? 'has-it' : 'need-it') + '">' + (inHome ? '✓' : '＋') + ' ' + escapeHtml(ingredient) + '</li>';
   }).join('') + '</ul></div><div><h4>Preparación</h4><ol class="steps-list">' + recipe.steps.map(function (step) {
     return '<li>' + escapeHtml(step) + '</li>';
-  }).join('') + '</ol></div></div><div class="modal-actions"><button class="soft-button" data-action="add-missing" data-id="' + recipe.id + '">＋ Añadir faltantes</button>' + (recipe.videoUrl ? '<a class="primary-button video-link" href="' + escapeAttr(recipe.videoUrl) + '" target="_blank" rel="noreferrer">▶ Ver video</a>' : '') + '</div></div></section></div>';
+  }).join('') + '</ol></div></div><div class="modal-actions">' + saveButton + '<button class="soft-button" data-action="add-missing" data-id="' + recipe.id + '">＋ Añadir faltantes</button>' + (recipe.videoUrl ? '<a class="primary-button video-link" href="' + escapeAttr(recipe.videoUrl) + '" target="_blank" rel="noreferrer">▶ Ver video</a>' : '') + '</div></div></section></div>';
 }
 
 function renderProductDetailModal(product) {
@@ -820,6 +850,117 @@ function analyzeFood(name, description) {
   };
 }
 
+function normalizeAiRecipe(recipe, index) {
+  const imageFallback = 'https://images.unsplash.com/photo-1498837167922-ddd27525d352?auto=format&fit=crop&w=900&q=85';
+  const title = String(recipe && recipe.title || '').trim();
+  const ingredients = Array.isArray(recipe && recipe.ingredients)
+    ? recipe.ingredients.map(function (item) { return String(item).trim(); }).filter(Boolean)
+    : [];
+  const steps = Array.isArray(recipe && recipe.steps)
+    ? recipe.steps.map(function (item) { return String(item).trim(); }).filter(Boolean)
+    : [];
+  const result = {
+    id: 'ai-' + Date.now() + '-' + index + '-' + Math.random().toString(36).slice(2, 7),
+    title: title,
+    description: String(recipe && recipe.description || '').trim(),
+    image: safeExternalUrl(recipe && recipe.imageUrl, imageFallback),
+    time: String(recipe && recipe.time || '30 min').trim(),
+    servings: Math.max(1, Number(recipe && recipe.servings) || 2),
+    tag: String(recipe && recipe.tag || 'Foráneo IA').trim(),
+    ingredients: ingredients,
+    steps: steps,
+    videoUrl: safeExternalUrl(recipe && recipe.videoUrl, ''),
+    cuisine: String(recipe && recipe.cuisine || '').trim(),
+    source: 'ai'
+  };
+  return title && ingredients.length && steps.length && safeRecipe(result) ? result : null;
+}
+
+function aiRequestBody(name, description, offset) {
+  return {
+    ingredient: name,
+    description: description,
+    pantry: state.products
+      .filter(function (product) { return Number(product.stock) > 0; })
+      .map(function (product) { return product.name; }),
+    count: 6,
+    offset: offset || 0,
+    previousTitles: (state.aiRecipes || []).map(function (recipe) { return recipe.title; }).slice(-50),
+    preferences: {
+      onlyAllowedEggs: ['hervido', 'cocido', 'duro', 'poché'],
+      forbiddenEggs: ['revueltos', 'omelette', 'frittata', 'tortilla de huevo'],
+      ricePolicy: 'No recomendar arroz tradicional, blanco o rojo. Solo permitir arroz si la receta es claramente china o asiática.'
+    }
+  };
+}
+
+async function askForAiRecipes(name, description, append) {
+  const cleanName = String(name || '').trim();
+  const cleanDescription = String(description || '').trim();
+  if (!cleanName) {
+    commit('Escribe un alimento para que Foráneo IA pueda buscar recetas.', 'danger');
+    return;
+  }
+
+  state.aiQuery = { name: cleanName, description: cleanDescription };
+  state.aiLoading = true;
+  render();
+
+  try {
+    if (!RECIPES_API_URL) {
+      throw new Error('La versión web publicada funciona sin clave, pero necesita una URL HTTPS del servidor de IA para generar recetas nuevas.');
+    }
+    const response = await fetch(RECIPES_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(aiRequestBody(cleanName, cleanDescription, append ? state.aiRecipes.length : 0))
+    });
+    const payload = await response.json().catch(function () { return {}; });
+    if (!response.ok) {
+      throw new Error(payload.error || 'No se pudo contactar el servicio de recetas.');
+    }
+
+    const recipes = (payload.recipes || []).map(normalizeAiRecipe).filter(Boolean);
+    if (!recipes.length) {
+      throw new Error('La IA no devolvió recetas compatibles. Intenta con otra descripción.');
+    }
+
+    state.aiRecipes = append ? state.aiRecipes.concat(recipes) : recipes;
+    state.scanResult = {
+      source: 'openai',
+      headline: append
+        ? 'Aquí tienes ' + recipes.length + ' ideas nuevas con ' + cleanName
+        : 'Recetas nuevas para aprovechar ' + cleanName,
+      description: 'Foráneo IA generó ' + recipes.length + ' recetas compatibles. Puedes pedir más opciones cuando quieras y guardar tus favoritas.',
+      recipes: state.aiRecipes
+    };
+  } catch (error) {
+    const fallback = analyzeFood(cleanName, cleanDescription);
+    state.scanResult = Object.assign({}, fallback, {
+      source: 'local',
+      warning: error.message || 'No fue posible conectar con la IA. Revisa que el servidor y OPENAI_API_KEY estén configurados.'
+    });
+  } finally {
+    state.aiLoading = false;
+    render();
+  }
+}
+
+function saveAiRecipe(recipe) {
+  if (!recipe || recipe.source !== 'ai') return recipe;
+  const existing = state.recipes.find(function (item) {
+    return normalize(item.title) === normalize(recipe.title);
+  });
+  if (existing) return existing;
+  const saved = Object.assign({}, recipe, {
+    id: 'recipe-' + Date.now(),
+    tag: 'Guardada de Foráneo IA',
+    source: 'saved-ai'
+  });
+  state.recipes.unshift(saved);
+  return saved;
+}
+
 function fileToDataUrl(file) {
   return new Promise(function (resolve, reject) {
     const reader = new FileReader();
@@ -923,6 +1064,22 @@ app.addEventListener('click', async function (event) {
   } else if (action === 'check-price') {
     const priceForm = target.closest('#price-check-form');
     if (priceForm) checkPrice(priceForm);
+  } else if (action === 'ask-recipes') {
+    const foodForm = target.closest('#food-scan-form');
+    if (foodForm) {
+      const data = readForm(foodForm);
+      await askForAiRecipes(data.get('name'), data.get('description'), false);
+    }
+  } else if (action === 'ask-for-more') {
+    const query = state.aiQuery || {};
+    await askForAiRecipes(query.name, query.description, true);
+  } else if (action === 'save-ai-recipe') {
+    const recipe = getRecipe(target.dataset.id);
+    const saved = saveAiRecipe(recipe);
+    if (saved) {
+      state.modal = null;
+      commit(saved.title + ' quedó guardada en tus recetas.');
+    }
   } else if (action === 'save-product') {
     const productForm = target.closest('#product-form');
     if (productForm) await saveProduct(productForm);
@@ -971,7 +1128,8 @@ app.addEventListener('click', async function (event) {
     const recipe = getRecipe(target.dataset.id);
     if (recipe) addMissingIngredients(recipe);
   } else if (action === 'plan-recipe') {
-    const recipe = getRecipe(target.dataset.id);
+    let recipe = getRecipe(target.dataset.id);
+    recipe = saveAiRecipe(recipe);
     if (recipe) {
       state.planner[dayKeyForToday()].cena = recipe.id;
       commit(recipe.title + ' quedó planeada para la cena.');
@@ -1101,8 +1259,7 @@ app.addEventListener('submit', async function (event) {
 
   if (form.id === 'food-scan-form') {
     const data = readForm(form);
-    state.scanResult = analyzeFood(String(data.get('name') || ''), String(data.get('description') || ''));
-    render();
+    await askForAiRecipes(data.get('name'), data.get('description'), false);
     return;
   }
 
@@ -1122,6 +1279,6 @@ render();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js').catch(function () {});
+    navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(function () {});
   });
 }
