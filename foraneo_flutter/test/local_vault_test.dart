@@ -60,4 +60,18 @@ void main() {
       expect((await vault.read())!['products'], isEmpty);
     },
   );
+  test('Six-digit PIN unlocks the encrypted local profile', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final vault = LocalVault(prefs);
+    await vault.createProfile('Joseph', 'MiClaveSegura2026!', {
+      'private': 'dato-protegido',
+    });
+    await vault.setPin('123456');
+    expect(vault.hasPin, isTrue);
+    vault.lock();
+    expect(await vault.unlockWithPin('Joseph', '123455'), isFalse);
+    expect(await vault.unlockWithPin('joseph', '123456'), isTrue);
+    expect((await vault.read())!['private'], 'dato-protegido');
+  });
 }

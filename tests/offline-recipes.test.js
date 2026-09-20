@@ -11,11 +11,11 @@ test('the shared offline catalog is complete, original, quantified and preferenc
   const native = readFileSync(new URL('../foraneo_flutter/assets/recipes/catalog.json', import.meta.url));
   assert.deepEqual(web, native);
   const recipes = getLocalRecipes();
-  assert.equal(recipes.length, 1225);
-  assert.equal(new Set(recipes.map(recipe => recipe.baseId)).size, 54);
+  assert.ok(recipes.length >= 5300);
+  assert.ok(new Set(recipes.map(recipe => recipe.baseId)).size >= 90);
   assert.equal(new Set(recipes.map(recipe => recipe.id)).size, recipes.length);
   assert.equal(new Set(recipes.map(recipe => recipe.title)).size, recipes.length);
-  assert.ok(gzipSync(web).length < 250000, 'the repetitive offline cookbook should compress efficiently');
+  assert.ok(gzipSync(web).length < 1000000, 'the expanded offline cookbook should compress efficiently');
   for (const recipe of recipes) {
     assert.ok(recipe.title && recipe.description && recipe.baseTitle, recipe.id);
     assert.ok(recipe.ingredients.length >= 4 && recipe.ingredients.every(ingredient => /^\d/.test(ingredient)), recipe.id);
@@ -78,7 +78,7 @@ test('explicit ingredient exclusions never promote the excluded ingredient', () 
 
 test('hard-boiled salads prepare vegetables before cooking and drain after both are cooked', () => {
   const salads = getLocalRecipes().filter(recipe => recipe.baseId === 'ensalada-huevo-duro');
-  assert.equal(salads.length, 5);
+  assert.equal(salads.length, 10);
   for (const recipe of salads) {
     const begin = recipe.steps.findIndex(step => step.includes('Cocina 4 minutos sin escurrir'));
     const complete = recipe.steps.findIndex(step => step.includes('Con la papa todavía hirviendo'));

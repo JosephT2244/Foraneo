@@ -37,6 +37,30 @@ const proteins = [
     prep: 'Escurre las lentejas de conserva en un colador de malla fina, enjuágalas con cuidado y mide 240 g. Deben estar tiernas pero conservar su forma.',
     cook: 'Calienta 10 ml del aceite en una sartén a fuego medio-bajo. Incorpora las lentejas cocidas y calienta 3 minutos, doblándolas con una espátula sin aplastarlas; reserva en un plato limpio.',
     allergens: [] },
+  { id: 'res', name: 'res', ingredient: item('250 g de bistec de res crudo, sin hueso', 'res'),
+    prep: 'Seca la carne con papel de cocina y córtala en tiras de 1 cm, usando una tabla exclusiva para alimentos crudos. Lávate las manos y desinfecta tabla y cuchillo antes de tocar las verduras.',
+    cook: 'Calienta 10 ml del aceite en una sartén muy caliente. Cocina la res 5–7 minutos, separando las tiras para que se doren. Comprueba que no queden partes frías ni crudas y reserva en un plato limpio.',
+    allergens: [] },
+  { id: 'cerdo', name: 'cerdo', ingredient: item('250 g de lomo de cerdo crudo, sin hueso', 'cerdo'),
+    prep: 'Corta el lomo de cerdo en cubos de 2 cm sobre una tabla exclusiva para carne cruda. No lo laves; limpia con agua caliente y jabón los utensilios y tus manos al terminar.',
+    cook: 'Calienta 10 ml del aceite a fuego medio-alto y cocina el cerdo 9–11 minutos, volteando los cubos. Verifica con termómetro 63 °C en el centro y deja reposar 3 minutos en un plato limpio.',
+    allergens: [] },
+  { id: 'pescado', name: 'pescado blanco', ingredient: item('250 g de filete de pescado blanco crudo, sin espinas', 'pescado'),
+    prep: 'Revisa el filete con los dedos limpios para retirar espinas y córtalo en cubos grandes de 3 cm. Mantén el pescado refrigerado hasta el momento de cocinarlo.',
+    cook: 'Calienta 10 ml del aceite a fuego medio. Cocina el pescado 6–8 minutos, volteándolo con cuidado una vez, hasta que se separe en lascas opacas y alcance 63 °C en el centro.',
+    allergens: ['pescado'] },
+  { id: 'camaron', name: 'camarón', ingredient: item('250 g de camarón crudo, pelado y desvenado', 'camaron'),
+    prep: 'Comprueba que el camarón esté descongelado en refrigeración, pelado y sin vena oscura. Sécalo con papel de cocina y lávate las manos antes de tocar otros ingredientes.',
+    cook: 'Calienta 10 ml del aceite a fuego medio-alto. Cocina el camarón 3–4 minutos, volteándolo hasta que esté rosado, opaco y firme; no lo prolongues para evitar que se endurezca.',
+    allergens: ['crustáceos'] },
+  { id: 'pavo', name: 'pavo', ingredient: item('250 g de pechuga de pavo cruda, sin piel ni hueso', 'pavo'),
+    prep: 'Corta el pavo en cubos de 2 cm sobre una tabla distinta de las verduras. Lávate las manos y limpia los utensilios inmediatamente al terminar.',
+    cook: 'Calienta 10 ml del aceite a fuego medio-alto. Cocina el pavo 9–11 minutos, girándolo varias veces, hasta que alcance 74 °C en la parte más gruesa. Reserva en un plato limpio.',
+    allergens: [] },
+  { id: 'huevo', name: 'huevo', ingredient: item('4 huevos medianos', 'huevo'),
+    prep: 'Rompe los huevos en un tazón limpio y bátelos con un tenedor durante 20 segundos, hasta unir clara y yema. Lávate las manos después de tocar las cáscaras.',
+    cook: 'Calienta 10 ml del aceite a fuego medio-bajo. Añade los huevos y cocina 3–4 minutos, moviendo con una espátula hasta que estén completamente cuajados, sin partes líquidas. Reserva.',
+    allergens: ['huevo'] },
 ];
 const vegetables = [
   { id: 'calabacita', name: 'calabacita', ingredient: item('250 g de calabacita', 'calabacita'),
@@ -54,6 +78,21 @@ const vegetables = [
   { id: 'pimiento', name: 'pimiento', ingredient: item('250 g de pimiento rojo', 'pimiento'),
     prep: 'Lava el pimiento, retira tallo, semillas y membranas blancas; corta tiras de 5 mm y luego trozos de unos 3 cm.',
     cook: 'Añade el pimiento a la cebolla y cocina 7–9 minutos a fuego medio, moviendo cada minuto, hasta que las tiras estén flexibles y presenten algunas zonas doradas.' },
+  { id: 'ejotes', name: 'ejotes', ingredient: item('250 g de ejotes frescos', 'ejote'),
+    prep: 'Lava los ejotes, retira los extremos fibrosos y córtalos por la mitad para que queden de tamaño uniforme.',
+    cook: 'Añade los ejotes y 40 ml de agua a la cebolla. Tapa 6 minutos a fuego medio y destapa 3–4 minutos, hasta que estén tiernos y con color verde intenso.' },
+  { id: 'espinaca', name: 'espinaca', ingredient: item('180 g de espinaca fresca', 'espinaca'),
+    prep: 'Lava la espinaca bajo agua potable, retira hojas dañadas y sécala con cuidado; si las hojas son grandes, córtalas en dos.',
+    cook: 'Incorpora la espinaca a la cebolla en dos tandas. Cocina 2–3 minutos, moviendo hasta que se reduzca y no queden hojas crudas, sin dejar que se seque.' },
+  { id: 'coliflor', name: 'coliflor', ingredient: item('250 g de coliflor', 'coliflor'),
+    prep: 'Lava la coliflor, separa floretes de 2 cm y corta el tallo tierno en láminas delgadas.',
+    cook: 'Agrega la coliflor y 50 ml de agua a la cebolla. Tapa 7 minutos a fuego medio y destapa 3 minutos más, hasta que un tenedor entre sin resistencia.' },
+  { id: 'nopal', name: 'nopal', ingredient: item('250 g de nopales limpios', 'nopal'),
+    prep: 'Enjuaga los nopales ya limpios, retira restos de espinas si fuera necesario y corta tiras de 1 cm.',
+    cook: 'Añade el nopal a la cebolla y cocina 8–10 minutos a fuego medio-alto, removiendo para evaporar el líquido viscoso hasta que esté tierno y ligeramente dorado.' },
+  { id: 'berenjena', name: 'berenjena', ingredient: item('250 g de berenjena', 'berenjena'),
+    prep: 'Lava la berenjena, retira el tallo y córtala en cubos de 2 cm con cáscara para que mantenga su forma.',
+    cook: 'Añade la berenjena a la cebolla y cocina 8–10 minutos a fuego medio, removiendo cada minuto, hasta que esté dorada, suave y sin partes duras.' },
 ];
 
 const sauces = {
@@ -148,7 +187,7 @@ for (const family of families) for (const sauceId of family.sauces) {
   const baseId = `${family.id}-${sauceId}`;
   for (const protein of proteins) for (const vegetable of vegetables) {
     const common = [item('20 ml de aceite de oliva (10 ml para la proteína y 10 ml para las verduras)', 'aceite de oliva'), item('50 g de cebolla', 'cebolla'), item('1 g de sal fina (aproximadamente 1/6 de cucharadita)', 'sal')];
-    if (['brocoli', 'zanahoria'].includes(vegetable.id)) common.push(item('40 ml de agua para las verduras', 'agua'));
+    if (['brocoli', 'zanahoria', 'ejotes', 'coliflor'].includes(vegetable.id)) common.push(item('40 ml de agua para las verduras', 'agua'));
     const ingredients = [...family.ingredients, protein.ingredient, vegetable.ingredient, ...common, ...sauce.ingredients];
     const title = `${family.name} de ${protein.name} y ${vegetable.name} ${sauce.name}`;
     const safety = family.id === 'arroz-asiatico'
@@ -218,6 +257,59 @@ for (const vegetable of vegetables) {
       'Coloca la papa y la verdura tibias sobre las hojas; reparte 2 huevos por persona y vierte el aderezo medido. Sirve al momento, sin calentar de nuevo la lechuga.',
       'Refrigera los componentes por separado antes de 2 horas, a 4 °C o menos. Consume esta ensalada preparada en 2 días y añade la lechuga y el aderezo justo antes de comer.'],
     time: 45, minutes: '45 min aprox.', servings: 2, category: 'cena', tag: 'Solo huevo hervido', cuisine: 'internacional', family: 'ensalada', image: 'photos/ensalada.jpg', imageCaption: 'Fotografía ilustrativa de ensalada; no representa exactamente esta variante.', difficulty: 'Fácil', equipment: ['2 ollas', 'colador o cesta de vapor', 'tazón', 'tabla y cuchillo'], allergens: ['huevo'], source: 'Recetario original Foráneo · variante de una base culinaria', sourceUrl: '', videoUrl: '', notes: ['No sustituir por preparaciones de huevo diferentes: esta receta contempla únicamente huevo duro.'] });
+}
+
+// Regional originals make the cookbook easy to browse by the cuisines people
+// actually look for. They intentionally use self-contained amounts and steps;
+// they are not copied from external recipe sites.
+const regionalSpecialties = [
+  ['chilaquiles-verdes', 'Chilaquiles verdes con pollo', 'mexicana', '250 g de tortillas de maíz en triángulos', 'tortilla de maiz', '250 g de pollo cocido deshebrado', 'pollo', '350 g de salsa verde cocida', 'salsa verde'],
+  ['tinga-poblana', 'Tinga poblana de pollo', 'mexicana', '300 g de pollo cocido deshebrado', 'pollo', '250 g de tomate triturado', 'tomate', '20 g de chile chipotle adobado', 'chipotle'],
+  ['pozole-rojo', 'Pozole rojo de cerdo', 'mexicana', '500 g de maíz pozolero cocido', 'maiz pozolero', '300 g de cerdo cocido y deshebrado', 'cerdo', '450 ml de caldo de pollo', 'caldo de pollo'],
+  ['tacos-al-pastor', 'Tacos al pastor caseros', 'mexicana', '8 tortillas de maíz pequeñas', 'tortilla de maiz', '300 g de cerdo en tiras', 'cerdo', '180 g de piña fresca', 'piña'],
+  ['mole-casero', 'Pollo en mole casero', 'mexicana', '300 g de pollo cocido', 'pollo', '250 g de pasta de mole preparada', 'mole', '500 ml de caldo de pollo', 'caldo de pollo'],
+  ['enchiladas-rojas', 'Enchiladas rojas con queso', 'mexicana', '8 tortillas de maíz pequeñas', 'tortilla de maiz', '220 g de queso fresco', 'queso fresco', '350 g de salsa roja cocida', 'salsa roja'],
+  ['sopes-frijol', 'Sopes de frijol y nopal', 'mexicana', '6 sopes de maíz horneados', 'sope de maiz', '300 g de frijoles bayos cocidos', 'frijol', '220 g de nopales cocidos', 'nopal'],
+  ['caldo-tlalpeno', 'Caldo tlalpeño', 'mexicana', '300 g de pollo cocido en cubos', 'pollo', '240 g de garbanzos cocidos', 'garbanzo', '700 ml de caldo de pollo', 'caldo de pollo'],
+  ['pescado-veracruzano', 'Pescado a la veracruzana', 'mexicana', '300 g de filete de pescado blanco', 'pescado', '300 g de tomate triturado', 'tomate', '60 g de aceitunas verdes', 'aceituna'],
+  ['tamales-elote', 'Tamales de elote', 'mexicana', '450 g de granos de elote', 'elote', '180 g de queso fresco', 'queso fresco', '120 g de harina de maíz', 'harina de maiz'],
+  ['huevos-mexicana', 'Huevos a la mexicana', 'mexicana', '6 huevos medianos', 'huevo', '220 g de tomate', 'tomate', '80 g de chile poblano', 'chile poblano'],
+  ['birria-casera', 'Birria de res casera', 'mexicana', '350 g de res en cubos', 'res', '450 ml de caldo de res', 'caldo de res', '35 g de chiles secos hidratados', 'chile seco'],
+  ['ramen', 'Ramen de pollo y miso', 'japonesa', '180 g de fideos ramen', 'fideo ramen', '250 g de pollo cocido', 'pollo', '35 g de pasta miso', 'miso'],
+  ['sushi-bowl', 'Bowl de sushi con salmón', 'japonesa', '160 g de arroz para sushi cocido', 'arroz', '220 g de salmón cocido', 'salmon', '80 g de aguacate', 'aguacate'],
+  ['mapo-tofu', 'Mapo tofu suave', 'china', '300 g de tofu firme', 'tofu', '200 g de carne de cerdo molida', 'cerdo', '25 ml de salsa de soya', 'salsa de soya'],
+  ['arroz-cantones', 'Arroz cantonés con camarón', 'china', '280 g de arroz cocido frío', 'arroz', '220 g de camarón', 'camaron', '4 huevos medianos', 'huevo'],
+  ['pad-thai', 'Fideos estilo pad thai', 'oriental', '180 g de fideos de arroz', 'fideo de arroz', '250 g de camarón', 'camaron', '35 g de cacahuate tostado', 'cacahuate'],
+  ['bibimbap', 'Bibimbap de res', 'coreana', '280 g de arroz cocido', 'arroz', '250 g de res en tiras', 'res', '30 g de pasta gochujang', 'gochujang'],
+  ['shawarma', 'Shawarma de pollo', 'medio oriente', '300 g de pollo en tiras', 'pollo', '4 panes pita', 'pan pita', '180 g de yogur natural', 'yogur natural'],
+  ['falafel', 'Falafel al horno con tahini', 'medio oriente', '360 g de garbanzos cocidos', 'garbanzo', '4 panes pita', 'pan pita', '40 g de tahini', 'tahini'],
+  ['paella', 'Paella de mariscos', 'española', '180 g de arroz de grano corto', 'arroz', '250 g de mariscos mixtos', 'mariscos', '600 ml de caldo de pescado', 'caldo de pescado'],
+  ['tortilla-espanola', 'Tortilla española de papa', 'española', '600 g de papa', 'papa', '8 huevos medianos', 'huevo', '120 g de cebolla', 'cebolla'],
+  ['fish-chips', 'Fish and chips al horno', 'reino unido', '300 g de pescado blanco', 'pescado', '600 g de papa', 'papa', '80 g de harina de trigo', 'harina'],
+  ['shepherd-pie', 'Shepherd’s pie de res', 'reino unido', '350 g de res molida', 'res', '700 g de papa', 'papa', '250 g de chícharos', 'chicharo'],
+  ['aji-gallina', 'Ají de gallina', 'peruana', '320 g de pollo cocido deshebrado', 'pollo', '300 ml de leche evaporada', 'leche evaporada', '35 g de ají amarillo', 'aji amarillo'],
+  ['lomo-saltado', 'Lomo saltado', 'peruana', '320 g de res en tiras', 'res', '400 g de papa', 'papa', '25 ml de salsa de soya', 'salsa de soya'],
+  ['bandeja-paisa', 'Bandeja paisa simplificada', 'colombiana', '280 g de frijoles rojos cocidos', 'frijol rojo', '250 g de res molida', 'res', '260 g de arroz cocido', 'arroz'],
+  ['arepas-rellenas', 'Arepas rellenas de pollo', 'venezolana', '300 g de harina de maíz precocida', 'harina de maiz', '280 g de pollo cocido', 'pollo', '100 g de aguacate', 'aguacate'],
+  ['pupusas', 'Pupusas de frijol y queso', 'salvadoreña', '300 g de masa de maíz', 'masa de maiz', '240 g de frijoles refritos', 'frijol', '220 g de queso rallado', 'queso'],
+  ['asado-argentino', 'Asado argentino de res', 'argentina', '400 g de bistec de res', 'res', '500 g de papa', 'papa', '35 g de chimichurri', 'chimichurri'],
+  ['pasta-carbonara', 'Pasta carbonara', 'italiana', '180 g de pasta seca', 'pasta', '150 g de tocino', 'tocino', '4 huevos medianos', 'huevo'],
+  ['risotto-hongos', 'Risotto de hongos', 'italiana', '180 g de arroz arborio', 'arroz', '250 g de champiñones', 'champiñon', '45 g de queso parmesano', 'queso parmesano'],
+  ['feijoada', 'Feijoada rápida', 'brasileña', '350 g de frijoles negros cocidos', 'frijol negro', '250 g de cerdo cocido', 'cerdo', '260 g de arroz cocido', 'arroz'],
+  ['jollof-rice', 'Arroz jollof con pollo', 'africana', '180 g de arroz', 'arroz', '300 g de pollo', 'pollo', '350 g de tomate triturado', 'tomate'],
+  ['borsch', 'Borsch de res y betabel', 'rusa', '300 g de res cocida', 'res', '350 g de betabel', 'betabel', '700 ml de caldo de res', 'caldo de res'],
+  ['moussaka', 'Moussaka de berenjena', 'europea', '450 g de berenjena', 'berenjena', '300 g de res molida', 'res', '250 ml de salsa de tomate', 'tomate'],
+  ['mac-cheese', 'Mac and cheese con brócoli', 'estadounidense', '180 g de pasta corta', 'pasta', '250 g de queso cheddar', 'queso cheddar', '250 g de brócoli', 'brocoli'],
+];
+
+for (const [id, title, cuisine, baseText, baseKey, mainText, mainKey, accentText, accentKey] of regionalSpecialties) {
+  const ingredients = [item(baseText, baseKey), item(mainText, mainKey), item(accentText, accentKey), item('80 g de cebolla', 'cebolla'), item('10 ml de aceite vegetal', 'aceite'), item('3 g de sal fina', 'sal')];
+  recipes.push({ id: `regional-${id}`, baseId: `regional-${id}`, baseTitle: title, title,
+    description: `Receta original de inspiración ${cuisine} para 2 personas, con ingredientes medidos y pasos completos para prepararla en casa.`,
+    ingredients: ingredients.map(i => i.text), ingredientKeys: ingredients.map(i => i.key),
+    steps: ['Lávate las manos, lee todos los pasos y mide los ingredientes. Lava las verduras bajo agua potable y mantén separados los utensilios de alimentos crudos y cocidos.', `Prepara la base: coloca ${baseText.toLowerCase()} en una olla o sartén amplia y sigue el tiempo de cocción indicado en su empaque cuando aplique. Mantén tapado a fuego bajo mientras haces el relleno.`, 'Pica los 80 g de cebolla y coloca una sartén amplia a fuego medio. Ten listo un plato limpio para separar cualquier ingrediente ya cocinado.', `Calienta los 10 ml de aceite, cocina la cebolla 3–4 minutos hasta que esté suave y añade ${mainText.toLowerCase()}. Cocina por completo, volteando o removiendo con frecuencia; las carnes y pescados no deben conservar partes crudas.`, `Incorpora ${accentText.toLowerCase()} y los 3 g de sal. Cocina 4–6 minutos a fuego medio, removiendo para distribuir el sabor sin que se pegue. Ajusta únicamente después de probar.`, 'Une la base con el relleno o sírvelos por capas, según el plato. Cocina 2 minutos más a fuego bajo para que todo quede caliente y homogéneo.', 'Apaga el fuego, deja reposar 2 minutos y reparte en dos platos. Sirve de inmediato; refrigera cualquier sobrante en un recipiente poco profundo antes de 2 horas.'],
+    time: 45, minutes: '45 min aprox.', servings: 2, category: 'comida', tag: `Cocina ${cuisine}`, cuisine, family: 'regional', image: 'photos/ensalada.jpg', imageCaption: 'Fotografía ilustrativa; el resultado varía según la receta.', difficulty: 'Intermedia', equipment: ['olla o sartén amplia', 'tabla y cuchillo', 'cuchara o espátula'], allergens: [], source: 'Recetario original Foráneo · especialidad regional', sourceUrl: '', videoUrl: '', notes: ['Las cantidades son para dos porciones. Revisa alérgenos, etiquetas y la cocción interna de carnes, huevo y pescado antes de servir.'],
+  });
 }
 
 for (const folder of ['public/recipes', 'foraneo_flutter/assets/recipes']) {

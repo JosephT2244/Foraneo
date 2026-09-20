@@ -1,4 +1,4 @@
-#define AppVersion "2.0.0"
+#define AppVersion "2.1.0"
 #define ReleaseDir "..\foraneo_flutter\build\windows\x64\runner\Release"
 [Setup]
 AppId={{D2A8A2B4-E0F1-49FD-8176-3A3A87C590CE}

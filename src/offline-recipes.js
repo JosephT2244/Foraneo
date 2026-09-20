@@ -82,15 +82,8 @@ export function missingIngredients(recipe, pantry = []) {
 
 export function recipeRestrictionReason(recipe) {
   if (!recipe || typeof recipe !== 'object') return 'La receta no tiene un formato válido.';
-  const list = value => Array.isArray(value) ? value.join(' ') : String(value ?? '');
-  const text = fold(`${recipe.title ?? ''} ${recipe.description ?? ''} ${list(recipe.ingredients)} ${list(recipe.steps)} ${recipe.cuisine ?? ''} ${recipe.tag ?? ''}`);
-  if (/\b(?:omelet\w*|frittata\w*|scrambl\w*)\b|\bhuevos? (?:revuelt\w*|frit\w*|estrellad\w*|pochad\w*|rancher\w*|batid\w*|a la mexicana|para (?:empanizar|rebozar|capear))|\b(?:tortilla|tortillas) (?:de huevo|espanola|francesa)|\b(?:bate|batir|baten|batiendo|batimos)\s+(?:(?:muy|bien|ligeramente|energicamente|suavemente|el|los|un|unos|otro|otros|restante|restantes|dos|tres|\d+)\s+){0,5}huevos?\b|\b(?:revuelve|remueve) (?:los )?huevos?\b/.test(text)) return 'Tus preferencias excluyen huevo revuelto, frito y preparaciones similares; solo se admite huevo hervido.';
-  const eggIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map(ingredient => fold(ingredient).replace(/\bsin huevos?\b/g, '')).filter(ingredient => /\bhuevos?\b/.test(ingredient) && !/\bagua\b.*\b(?:cocer|hervir|enfriar)\b/.test(ingredient));
-  const explicitlyBoiled = ingredient => /\bhuevos? (?:duros?|cocidos?|hervidos?)\b/.test(ingredient);
-  if (eggIngredients.some(explicitlyBoiled) && eggIngredients.some(ingredient => !explicitlyBoiled(ingredient))) return 'Hay huevo hervido y otra preparación de huevo sin aclarar; indica que todo el huevo sea hervido.';
-  const ingredients = fold(list(recipe.ingredients)).replace(/\bsin huevos?\b/g, '');
-  if (/\bhuevos?\b/.test(ingredients) && !/\bhuevos? (?:duros?|cocidos?|hervidos?)\b|\b(?:hierve|hervir|cuece|cocer) (?:los )?huevos?\b/.test(text)) return 'Esta receta usa huevo y no indica que sea únicamente hervido.';
-  if (/\barroz\b/.test(text) && !/\b(?:chin[oa]|asiatic[oa]|oriental|japones\w*|corean\w*|sushi|onigiri|wok|teriyaki|cantones|thai|tailandes\w*|bibimbap)\b/.test(text)) return 'Tus preferencias admiten arroz solo en preparaciones asiáticas, no arroz tradicional.';
+  // Huevo, carnes y arroz forman parte del recetario sin restricciones.
+  // Conservamos este contrato para las recetas guardadas de versiones previas.
   return null;
 }
 

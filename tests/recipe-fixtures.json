@@ -27,19 +27,19 @@
     ["", "", false]
   ],
   "restrictions": [
-    [{"title":"Huevos revueltos","ingredients":["2 huevos"],"steps":["Bate los huevos"]}, false],
-    [{"title":"Omelette de verduras","ingredients":["2 huevos"],"steps":["Cocina en sartén"]}, false],
-    [{"title":"Huevos estrellados","ingredients":["2 huevos"],"steps":["Fríe en sartén"]}, false],
+    [{"title":"Huevos revueltos","ingredients":["2 huevos"],"steps":["Bate los huevos"]}, true],
+    [{"title":"Omelette de verduras","ingredients":["2 huevos"],"steps":["Cocina en sartén"]}, true],
+    [{"title":"Huevos estrellados","ingredients":["2 huevos"],"steps":["Fríe en sartén"]}, true],
     [{"title":"Ensalada de huevo duro","ingredients":["2 huevos"],"steps":["Hierve los huevos hasta que clara y yema estén firmes"]}, true],
-    [{"title":"Arroz rojo tradicional","ingredients":["arroz","tomate"],"steps":["Cuece en caldo"]}, false],
+    [{"title":"Arroz rojo tradicional","ingredients":["arroz","tomate"],"steps":["Cuece en caldo"]}, true],
     [{"title":"Arroz chino al wok","ingredients":["arroz","salsa de soya"],"steps":["Saltea las verduras y el arroz"]}, true],
-    [{"title":"Arroz chino al wok","ingredients":["arroz","2 huevos"],"steps":["Bate los huevos y cocina"]}, false],
+    [{"title":"Arroz chino al wok","ingredients":["arroz","2 huevos"],"steps":["Bate los huevos y cocina"]}, true],
     [{"title":"Pasta casera","ingredients":["160 g de pasta sin huevo"],"steps":["Cuece la pasta"]}, true],
-    [{"title":"Panqueques","ingredients":["2 huevos","harina"],"steps":["Mezcla todo y vierte en sartén"]}, false],
-    [{"title":"Ensalada mixta","ingredients":["1 huevo duro","1 huevo para empanizar"],"steps":["Hierve un huevo. Bate el otro huevo y fríe."]}, false],
-    [{"title":"Ensalada con dos huevos","ingredients":["1 huevo duro","1 huevo"],"steps":["Hierve uno y usa el otro en la cobertura."]}, false],
+    [{"title":"Panqueques","ingredients":["2 huevos","harina"],"steps":["Mezcla todo y vierte en sartén"]}, true],
+    [{"title":"Ensalada mixta","ingredients":["1 huevo duro","1 huevo para empanizar"],"steps":["Hierve un huevo. Bate el otro huevo y fríe."]}, true],
+    [{"title":"Ensalada con dos huevos","ingredients":["1 huevo duro","1 huevo"],"steps":["Hierve uno y usa el otro en la cobertura."]}, true],
     [{"title":"Ensalada con huevo hervido","ingredients":["2 huevos"],"steps":["Hierve los huevos durante 12 minutos hasta que clara y yema estén firmes."]}, true],
-    [{"title":"Huevo con cobertura","ingredients":["2 huevos"],"steps":["Hierve un huevo. Bate el otro huevo para la cobertura."]}, false],
+    [{"title":"Huevo con cobertura","ingredients":["2 huevos"],"steps":["Hierve un huevo. Bate el otro huevo para la cobertura."]}, true],
     [{"title":"Ensalada con aderezo","ingredients":["2 huevos duros","1000 ml de agua para cocer los huevos","20 ml de aceite"],"steps":["Bate el aderezo. Sirve con huevos duros."]}, true]
   ],
   "queries": [

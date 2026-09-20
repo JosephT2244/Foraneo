@@ -30,26 +30,29 @@ class _ForaneoAppState extends State<ForaneoApp> {
   ThemeData theme(Brightness brightness) {
     final dark = brightness == Brightness.dark;
     final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xff0b493b),
+      seedColor: const Color(0xff174d3d),
       brightness: brightness,
+      surface: dark ? const Color(0xff13231d) : const Color(0xfffffdf6),
     );
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: dark
-          ? const Color(0xff111e1a)
-          : const Color(0xfff7f7ef),
-      appBarTheme: const AppBarTheme(
+          ? const Color(0xff0d1a15)
+          : const Color(0xfff4f1e9),
+      appBarTheme: AppBarTheme(
         centerTitle: false,
         elevation: 0,
         scrolledUnderElevation: 0,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
       ),
       cardTheme: CardThemeData(
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(28),
           side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .55)),
         ),
       ),
@@ -57,7 +60,7 @@ class _ForaneoAppState extends State<ForaneoApp> {
         filled: true,
         fillColor: scheme.surfaceContainerLowest,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         contentPadding: const EdgeInsets.symmetric(
@@ -69,28 +72,38 @@ class _ForaneoAppState extends State<ForaneoApp> {
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(18),
           ),
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: scheme.surface,
-        indicatorColor: scheme.primaryContainer,
+        backgroundColor: dark
+            ? const Color(0xff13231d)
+            : const Color(0xfffffdf6),
+        indicatorColor: dark
+            ? const Color(0xff2c5944)
+            : const Color(0xffdbe9ce),
         height: 76,
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(
-          fontSize: 32,
+          fontFamily: 'Georgia',
+          fontSize: 34,
           height: 1.15,
           fontWeight: FontWeight.w800,
           letterSpacing: -1,
         ),
         headlineMedium: TextStyle(
-          fontSize: 26,
+          fontFamily: 'Georgia',
+          fontSize: 28,
           fontWeight: FontWeight.w800,
           letterSpacing: -.6,
         ),
-        titleLarge: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
+        titleLarge: TextStyle(
+          fontFamily: 'Georgia',
+          fontSize: 22,
+          fontWeight: FontWeight.w700,
+        ),
         titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         bodyMedium: TextStyle(fontSize: 14, height: 1.45),
       ),
@@ -708,9 +721,10 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
         vault: vault!,
         onGuest: () => enter(guest: true),
         onUnlocked: () => enter(),
-        onCreate: (username, password) async {
+        onCreate: (username, password, pin) async {
           await restore();
           await vault!.createProfile(username, password, snapshot());
+          if (pin.isNotEmpty) await vault!.setPin(pin);
           await enter();
         },
       );
@@ -1776,7 +1790,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Buscador local por ingredientes, no IA generativa. No requiere API ni modelos pesados. Se excluyen huevo revuelto y similares, y arroz no asiático. *Comprueba cantidades y alérgenos antes de cocinar.',
+                'Encuentra recetas por ingredientes, cocina o antojo. Cada ficha incluye cantidades, pasos y lista de faltantes para tu compra.',
                 style: TextStyle(fontSize: 12),
               ),
             ],
@@ -2770,6 +2784,62 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> configurePin() async {
+    final controller = TextEditingController();
+    final form = GlobalKey<FormState>();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(vault!.hasPin ? 'Cambiar PIN' : 'Crear PIN de acceso'),
+        content: Form(
+          key: form,
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            decoration: const InputDecoration(
+              labelText: 'PIN de 6 dígitos',
+              helperText:
+                  'Solo sirve para este dispositivo; conserva tu contraseña.',
+            ),
+            validator: (value) => RegExp(r'^\d{6}$').hasMatch(value ?? '')
+                ? null
+                : 'Usa exactamente 6 dígitos',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              if (!form.currentState!.validate()) return;
+              await vault!.setPin(controller.text);
+              if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+            },
+            child: const Text('Guardar PIN'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (saved == true && mounted) snack('PIN de acceso actualizado.');
+  }
+
+  Future<void> configureBiometrics() async {
+    final enabled = await vault!.enableBiometrics();
+    if (!mounted) return;
+    snack(
+      enabled
+          ? 'Biometría activada para este perfil y dispositivo.'
+          : 'No fue posible activar la biometría. Verifica el bloqueo seguro del dispositivo.',
+    );
+    setState(() {});
+  }
+
   Future<void> exportBackup() async {
     if (!await confirm(
       'Exportar respaldo sin cifrar',
@@ -3072,25 +3142,47 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 14),
-            OutlinedButton.icon(
-              onPressed: vault!.hasProfile
-                  ? lockProfile
-                  : () async {
-                      await saveQueue;
-                      if (!mounted) return;
-                      setState(() {
-                        authenticated = false;
-                        settings = false;
-                      });
-                    },
-              icon: Icon(
-                vault!.hasProfile ? Icons.lock_outline : Icons.person_add_alt,
-              ),
-              label: Text(
-                vault!.hasProfile
-                    ? 'Bloquear perfil / cerrar sesión'
-                    : 'Crear mi perfil local',
-              ),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: vault!.hasProfile
+                      ? lockProfile
+                      : () async {
+                          await saveQueue;
+                          if (!mounted) return;
+                          setState(() {
+                            authenticated = false;
+                            settings = false;
+                          });
+                        },
+                  icon: Icon(
+                    vault!.hasProfile
+                        ? Icons.lock_outline
+                        : Icons.person_add_alt,
+                  ),
+                  label: Text(
+                    vault!.hasProfile
+                        ? 'Bloquear perfil / cerrar sesión'
+                        : 'Crear mi perfil local',
+                  ),
+                ),
+                if (vault!.hasProfile)
+                  OutlinedButton.icon(
+                    onPressed: configurePin,
+                    icon: const Icon(Icons.pin_outlined),
+                    label: Text(
+                      vault!.hasPin ? 'Cambiar PIN' : 'Crear PIN de acceso',
+                    ),
+                  ),
+                if (vault!.hasProfile && !vault!.biometricEnabled)
+                  OutlinedButton.icon(
+                    onPressed: configureBiometrics,
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('Activar biometría'),
+                  ),
+              ],
             ),
           ],
         ),
@@ -3140,7 +3232,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Preferencias activas: huevo únicamente hervido y arroz solo en preparaciones asiáticas. Las recetas personales pasan por el mismo filtro.',
+              'Puedes guardar tus propias recetas, ingredientes y preparaciones sin restricciones de tipo de comida.',
               style: TextStyle(fontSize: 12),
             ),
             const Divider(height: 28),
@@ -3184,7 +3276,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
       const SizedBox(height: 30),
       const Center(
         child: Text(
-          'Foráneo · versión 2.0.0\nHecho para sentirte en casa.',
+          'Foráneo · versión 2.1.0\nHecho para sentirte en casa.',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 12),
         ),

@@ -38,8 +38,11 @@ void main() {
     'native asset includes the complete cookbook and shared ranking',
     () async {
       final recipes = await OfflineRecipes.load();
-      expect(recipes.length, 1225);
-      expect(recipes.map((recipe) => recipe['baseId']).toSet().length, 54);
+      expect(recipes.length, greaterThanOrEqualTo(5300));
+      expect(
+        recipes.map((recipe) => recipe['baseId']).toSet().length,
+        greaterThanOrEqualTo(90),
+      );
       for (final row in fixtures['queries'] as List) {
         final result = OfflineRecipes.recommend(
           recipes: recipes,

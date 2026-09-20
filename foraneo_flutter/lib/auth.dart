@@ -12,7 +12,8 @@ class AuthScreen extends StatefulWidget {
   });
   final LocalVault vault;
   final Future<void> Function() onGuest, onUnlocked;
-  final Future<void> Function(String username, String password) onCreate;
+  final Future<void> Function(String username, String password, String pin)
+  onCreate;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -21,8 +22,9 @@ class _AuthScreenState extends State<AuthScreen> {
   final form = GlobalKey<FormState>();
   final username = TextEditingController(),
       password = TextEditingController(),
-      repeat = TextEditingController();
-  bool busy = false, visible = false, creating = false;
+      repeat = TextEditingController(),
+      pin = TextEditingController();
+  bool busy = false, visible = false, creating = false, usingPin = false;
   String? error;
   int failures = 0;
   DateTime? retryAt;
@@ -30,6 +32,7 @@ class _AuthScreenState extends State<AuthScreen> {
   void initState() {
     super.initState();
     creating = !widget.vault.hasProfile;
+    usingPin = !creating && widget.vault.hasPin;
     username.text = widget.vault.username;
   }
 
@@ -38,6 +41,7 @@ class _AuthScreenState extends State<AuthScreen> {
     username.dispose();
     password.dispose();
     repeat.dispose();
+    pin.dispose();
     super.dispose();
   }
 
@@ -55,8 +59,10 @@ class _AuthScreenState extends State<AuthScreen> {
     });
     try {
       if (creating) {
-        await widget.onCreate(username.text.trim(), password.text);
-      } else if (await widget.vault.unlock(username.text, password.text)) {
+        await widget.onCreate(username.text.trim(), password.text, pin.text);
+      } else if (usingPin
+          ? await widget.vault.unlockWithPin(username.text, password.text)
+          : await widget.vault.unlock(username.text, password.text)) {
         await widget.onUnlocked();
       } else {
         failures++;
@@ -64,7 +70,11 @@ class _AuthScreenState extends State<AuthScreen> {
           retryAt = DateTime.now().add(const Duration(seconds: 15));
         }
         if (mounted) {
-          setState(() => error = 'El usuario o la contraseña no coinciden.');
+          setState(
+            () => error = usingPin
+                ? 'El usuario o el PIN no coinciden.'
+                : 'El usuario o la contraseña no coinciden.',
+          );
         }
       }
     } catch (_) {
@@ -74,6 +84,26 @@ class _AuthScreenState extends State<AuthScreen> {
           error =
               'No se pudo completar el acceso. Tus datos no se han borrado. Revisa tu contraseña y vuelve a intentar.';
         });
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> biometricLogin() async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      if (await widget.vault.unlockWithBiometrics(username.text)) {
+        await widget.onUnlocked();
+      } else if (mounted) {
+        setState(
+          () => error =
+              'No se pudo usar la biometría. Prueba con tu PIN o contraseña.',
+        );
       }
     } finally {
       if (mounted) setState(() => busy = false);
@@ -139,11 +169,17 @@ class _AuthScreenState extends State<AuthScreen> {
                       controller: password,
                       enabled: !busy,
                       obscureText: !visible,
-                      autofillHints: [
-                        creating
-                            ? AutofillHints.newPassword
-                            : AutofillHints.password,
-                      ],
+                      keyboardType: !creating && usingPin
+                          ? TextInputType.number
+                          : TextInputType.text,
+                      maxLength: !creating && usingPin ? 6 : null,
+                      autofillHints: !creating && usingPin
+                          ? const []
+                          : [
+                              creating
+                                  ? AutofillHints.newPassword
+                                  : AutofillHints.password,
+                            ],
                       textInputAction: creating
                           ? TextInputAction.next
                           : TextInputAction.done,
@@ -151,12 +187,18 @@ class _AuthScreenState extends State<AuthScreen> {
                         if (!creating) submit();
                       },
                       decoration: InputDecoration(
-                        labelText: 'Contraseña',
+                        labelText: !creating && usingPin
+                            ? 'PIN de acceso'
+                            : 'Contraseña',
                         helperText: creating
                             ? 'Mínimo 10 caracteres. No existe recuperación en línea.'
                             : null,
                         helperMaxLines: 2,
-                        prefixIcon: const Icon(Icons.lock_outline),
+                        prefixIcon: Icon(
+                          !creating && usingPin
+                              ? Icons.pin_outlined
+                              : Icons.lock_outline,
+                        ),
                         suffixIcon: IconButton(
                           tooltip: visible
                               ? 'Ocultar contraseña'
@@ -169,11 +211,18 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                         ),
                       ),
-                      validator: (v) => (v?.length ?? 0) < (creating ? 10 : 1)
-                          ? (creating
-                                ? 'Usa al menos 10 caracteres'
-                                : 'Escribe tu contraseña')
-                          : null,
+                      validator: (v) {
+                        if (!creating && usingPin) {
+                          return RegExp(r'^\d{6}$').hasMatch(v ?? '')
+                              ? null
+                              : 'Escribe tu PIN de 6 dígitos';
+                        }
+                        return (v?.length ?? 0) < (creating ? 10 : 1)
+                            ? (creating
+                                  ? 'Usa al menos 10 caracteres'
+                                  : 'Escribe tu contraseña')
+                            : null;
+                      },
                     ),
                     if (creating) ...[
                       const SizedBox(height: 16),
@@ -190,6 +239,25 @@ class _AuthScreenState extends State<AuthScreen> {
                         validator: (v) => v != password.text
                             ? 'Las contraseñas no coinciden'
                             : null,
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: pin,
+                        enabled: !busy,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'PIN de acceso (opcional)',
+                          helperText:
+                              '6 dígitos para entrar más rápido en este dispositivo.',
+                          prefixIcon: Icon(Icons.pin_outlined),
+                        ),
+                        validator: (v) =>
+                            (v?.isEmpty ?? true) ||
+                                RegExp(r'^\d{6}$').hasMatch(v!)
+                            ? null
+                            : 'Usa exactamente 6 dígitos',
                       ),
                     ],
                     if (error != null)
@@ -217,6 +285,31 @@ class _AuthScreenState extends State<AuthScreen> {
                                   : 'Iniciar sesión',
                             ),
                     ),
+                    if (!creating && widget.vault.hasPin)
+                      TextButton.icon(
+                        onPressed: busy
+                            ? null
+                            : () => setState(() {
+                                usingPin = !usingPin;
+                                password.clear();
+                                error = null;
+                              }),
+                        icon: Icon(
+                          usingPin
+                              ? Icons.password_outlined
+                              : Icons.pin_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          usingPin ? 'Usar contraseña' : 'Usar PIN de acceso',
+                        ),
+                      ),
+                    if (!creating && widget.vault.biometricEnabled)
+                      OutlinedButton.icon(
+                        onPressed: busy ? null : biometricLogin,
+                        icon: const Icon(Icons.fingerprint),
+                        label: const Text('Usar biometría / Windows Hello'),
+                      ),
                     if (!widget.vault.hasProfile) ...[
                       const SizedBox(height: 8),
                       TextButton(
@@ -232,7 +325,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     ],
                     const SizedBox(height: 20),
                     Text(
-                      'Sin API, pagos ni cuentas en la nube. El perfil cifra los datos de este dispositivo. Tu contraseña no se envía a ningún servidor. Conserva un respaldo: si olvidas la contraseña, no podemos recuperarla.',
+                      'Tu perfil se cifra en este dispositivo. Conserva un respaldo y tu contraseña para mantener el control de tu hogar digital.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,

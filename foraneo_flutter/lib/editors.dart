@@ -556,7 +556,7 @@ class _RecipeEditorState extends State<RecipeEditor> {
       if (!recipe.allowed) {
         setState(
           () => error =
-              'Esta receta no coincide con tus preferencias: sin huevos revueltos ni arroz tradicional.',
+              'Revisa ingredientes, cantidades y cocción antes de guardar la receta.',
         );
         return;
       }

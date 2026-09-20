@@ -194,48 +194,7 @@ class OfflineRecipes {
   }
 
   static String? recipeRestrictionReason(Map<String, dynamic> recipe) {
-    final text = _fold(
-      '${recipe['title'] ?? ''} ${recipe['description'] ?? ''} ${_strings(recipe['ingredients']).join(' ')} ${_strings(recipe['steps']).join(' ')} ${recipe['cuisine'] ?? ''} ${recipe['tag'] ?? ''}',
-    );
-    if (RegExp(
-      r'\b(?:omelet\w*|frittata\w*|scrambl\w*)\b|\bhuevos? (?:revuelt\w*|frit\w*|estrellad\w*|pochad\w*|rancher\w*|batid\w*|a la mexicana|para (?:empanizar|rebozar|capear))|\b(?:tortilla|tortillas) (?:de huevo|espanola|francesa)|\b(?:bate|batir|baten|batiendo|batimos)\s+(?:(?:muy|bien|ligeramente|energicamente|suavemente|el|los|un|unos|otro|otros|restante|restantes|dos|tres|\d+)\s+){0,5}huevos?\b|\b(?:revuelve|remueve) (?:los )?huevos?\b',
-    ).hasMatch(text)) {
-      return 'Tus preferencias excluyen huevo revuelto, frito y preparaciones similares; solo se admite huevo hervido.';
-    }
-    final eggIngredients = _strings(recipe['ingredients'])
-        .map(
-          (ingredient) =>
-              _fold(ingredient).replaceAll(RegExp(r'\bsin huevos?\b'), ''),
-        )
-        .where(
-          (ingredient) =>
-              RegExp(r'\bhuevos?\b').hasMatch(ingredient) &&
-              !RegExp(
-                r'\bagua\b.*\b(?:cocer|hervir|enfriar)\b',
-              ).hasMatch(ingredient),
-        );
-    bool explicitlyBoiled(String ingredient) => RegExp(
-      r'\bhuevos? (?:duros?|cocidos?|hervidos?)\b',
-    ).hasMatch(ingredient);
-    if (eggIngredients.any(explicitlyBoiled) &&
-        eggIngredients.any((ingredient) => !explicitlyBoiled(ingredient))) {
-      return 'Hay huevo hervido y otra preparación de huevo sin aclarar; indica que todo el huevo sea hervido.';
-    }
-    final ingredients = _fold(
-      _strings(recipe['ingredients']).join(' '),
-    ).replaceAll(RegExp(r'\bsin huevos?\b'), '');
-    if (RegExp(r'\bhuevos?\b').hasMatch(ingredients) &&
-        !RegExp(
-          r'\bhuevos? (?:duros?|cocidos?|hervidos?)\b|\b(?:hierve|hervir|cuece|cocer) (?:los )?huevos?\b',
-        ).hasMatch(text)) {
-      return 'Esta receta usa huevo y no indica que sea únicamente hervido.';
-    }
-    if (RegExp(r'\barroz\b').hasMatch(text) &&
-        !RegExp(
-          r'\b(?:chin[oa]|asiatic[oa]|oriental|japones\w*|corean\w*|sushi|onigiri|wok|teriyaki|cantones|thai|tailandes\w*|bibimbap)\b',
-        ).hasMatch(text)) {
-      return 'Tus preferencias admiten arroz solo en preparaciones asiáticas, no arroz tradicional.';
-    }
+    // Mirrors web: every recipe is allowed, including eggs, meats and rice.
     return null;
   }
 
@@ -247,7 +206,7 @@ class OfflineRecipes {
     try {
       final json = await rootBundle.loadString('assets/recipes/catalog.json');
       final recipes = await compute(_decodeCookbook, json);
-      return recipes.where(isRecipeAllowed).toList();
+      return recipes;
     } catch (_) {
       _loading = null;
       rethrow;

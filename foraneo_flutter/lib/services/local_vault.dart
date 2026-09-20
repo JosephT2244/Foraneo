@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:cryptography/cryptography.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'device_key_store.dart';
 
 /// On-device profile only. No server, account API or password recovery service.
 class LocalVault {
@@ -12,6 +13,24 @@ class LocalVault {
   SecretKey? _key;
   LocalVault(this.preferences);
   bool get hasProfile => preferences.containsKey(profileKey);
+  bool get hasPin {
+    try {
+      final profile = jsonDecode(preferences.getString(profileKey) ?? '{}');
+      return profile is Map && profile['pin'] is Map;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool get biometricEnabled {
+    try {
+      final profile = jsonDecode(preferences.getString(profileKey) ?? '{}');
+      return profile is Map && profile['biometric'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   bool get unlocked => !hasProfile || _key != null;
   String get username {
     try {
@@ -96,6 +115,103 @@ class LocalVault {
       _key = null;
       return false;
     }
+  }
+
+  /// A six-digit device PIN is a convenience unlock for this local vault.
+  /// The profile key is wrapped with a separately salted PBKDF2 key; the
+  /// password remains available as the recovery method.
+  Future<void> setPin(String pin) async {
+    if (!unlocked || !RegExp(r'^\d{6}$').hasMatch(pin)) {
+      throw ArgumentError('El PIN debe tener exactamente 6 dígitos.');
+    }
+    final profile = Map<String, dynamic>.from(
+      jsonDecode(preferences.getString(profileKey) ?? '{}') as Map,
+    );
+    final random = Random.secure();
+    final salt = List<int>.generate(16, (_) => random.nextInt(256));
+    final pinKey = await _derive(pin, salt);
+    final wrapped = await AesGcm.with256bits().encrypt(
+      await _key!.extractBytes(),
+      secretKey: pinKey,
+    );
+    profile['pin'] = {
+      'salt': base64Encode(salt),
+      'cipher': base64Encode(wrapped.cipherText),
+      'nonce': base64Encode(wrapped.nonce),
+      'mac': base64Encode(wrapped.mac.bytes),
+    };
+    if (!await preferences.setString(profileKey, jsonEncode(profile))) {
+      throw StateError('No se pudo guardar el PIN en este dispositivo.');
+    }
+  }
+
+  Future<bool> unlockWithPin(String username, String pin) async {
+    if (!RegExp(r'^\d{6}$').hasMatch(pin)) return false;
+    try {
+      final profile = Map<String, dynamic>.from(
+        jsonDecode(preferences.getString(profileKey)!) as Map,
+      );
+      if (username.trim().toLowerCase() !=
+          '${profile['username']}'.toLowerCase()) {
+        return false;
+      }
+      final wrapped = profile['pin'];
+      if (wrapped is! Map) return false;
+      final pinKey = await _derive(pin, base64Decode('${wrapped['salt']}'));
+      final rawKey = await AesGcm.with256bits().decrypt(
+        SecretBox(
+          base64Decode('${wrapped['cipher']}'),
+          nonce: base64Decode('${wrapped['nonce']}'),
+          mac: Mac(base64Decode('${wrapped['mac']}')),
+        ),
+        secretKey: pinKey,
+      );
+      _key = SecretKey(rawKey);
+      final checked = utf8.decode(
+        await _decrypt(Map<String, dynamic>.from(profile['check'])),
+      );
+      if (checked == 'Foráneo:perfil:v2') return true;
+    } catch (_) {
+      // Fall through and ensure no decrypted key stays in memory.
+    }
+    _key = null;
+    return false;
+  }
+
+  Future<bool> enableBiometrics() async {
+    if (!hasProfile || !unlocked || !await DeviceKeyStore.canUse()) {
+      return false;
+    }
+    if (!await DeviceKeyStore.save(await _key!.extractBytes())) return false;
+    final profile = Map<String, dynamic>.from(
+      jsonDecode(preferences.getString(profileKey) ?? '{}') as Map,
+    );
+    profile['biometric'] = true;
+    return preferences.setString(profileKey, jsonEncode(profile));
+  }
+
+  Future<bool> unlockWithBiometrics(String username) async {
+    if (!biometricEnabled) return false;
+    try {
+      final profile = Map<String, dynamic>.from(
+        jsonDecode(preferences.getString(profileKey)!) as Map,
+      );
+      if (username.trim().toLowerCase() !=
+          '${profile['username']}'.toLowerCase()) {
+        return false;
+      }
+      final rawKey = await DeviceKeyStore.read();
+      if (rawKey == null) return false;
+      _key = SecretKey(rawKey);
+      final checked = utf8.decode(
+        await _decrypt(Map<String, dynamic>.from(profile['check'])),
+      );
+      if (checked == 'Foráneo:perfil:v2') return true;
+    } catch (_) {
+      // Treat unavailable secure storage as a regular failed unlock.
+    }
+    _key = null;
+    return false;
   }
 
   void lock() {
