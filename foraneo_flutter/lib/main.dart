@@ -384,7 +384,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
       final recipes = await OfflineRecipes.loadIndex();
       if (mounted) {
         setState(() {
-          catalog = recipes;
+          catalog = [...OfflineRecipes.fallbackRecipes, ...recipes];
           catalogReady = true;
         });
       }

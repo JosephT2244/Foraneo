@@ -319,7 +319,9 @@ export async function loadLocalRecipes(baseUrl = "/") {
     .then((recipes) => {
       if (!Array.isArray(recipes))
         throw new Error("El recetario local tiene un formato inválido.");
-      return primeLocalRecipes(recipes);
+      // Preserve the immediate, complete welcome recipes used before this
+      // index arrives, so saved favourites and menu items never disappear.
+      return primeLocalRecipes([...welcomeRecipes, ...recipes]);
     })
     .catch((error) => {
       loadingCatalog = undefined;
