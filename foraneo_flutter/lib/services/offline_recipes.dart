@@ -12,6 +12,108 @@ List<Map<String, dynamic>> _decodeCookbook(String json) =>
 /// Keep aliases, scoring and fixtures aligned with src/offline-recipes.js.
 class OfflineRecipes {
   static Future<List<Map<String, dynamic>>>? _loading;
+  static Future<List<Map<String, dynamic>>>? _indexLoading;
+  static Future<List<Map<String, dynamic>>>? _featuredLoading;
+  static final Map<String, Future<List<Map<String, dynamic>>>> _chunks = {};
+
+  /// Complete, tiny recipes available before the larger search index finishes.
+  static final List<Map<String, dynamic>> fallbackRecipes = [
+    {
+      'id': 'rapida-avena',
+      'baseId': 'rapida-avena',
+      'title': 'Avena cremosa con fruta',
+      'description': 'Desayuno rápido y cálido para comenzar el día.',
+      'ingredients': [
+        '80 g de avena',
+        '300 ml de leche',
+        '1 plátano',
+        '5 g de canela',
+      ],
+      'ingredientKeys': ['avena', 'leche', 'platano', 'canela'],
+      'steps': [
+        'Hierve la leche a fuego medio en una olla pequeña durante 3 minutos.',
+        'Añade la avena y cocina 5 minutos, moviendo hasta que espese.',
+        'Sirve con el plátano en rebanadas y la canela.',
+      ],
+      'minutes': '10 min',
+      'servings': 2,
+      'category': 'desayuno',
+      'tag': 'Desayuno',
+      'cuisine': 'casera',
+      'image': 'photos/avena.jpg',
+      'equipment': ['olla pequeña', 'cuchara'],
+      'allergens': [],
+      'notes': ['Ajusta la fruta a lo que tengas en casa.'],
+      'source': 'Recetario original Foráneo · inicio rápido',
+      'videoUrl': '',
+    },
+    {
+      'id': 'rapida-pasta',
+      'baseId': 'rapida-pasta',
+      'title': 'Pasta de tomate y albahaca',
+      'description': 'Una comida sencilla, completa y reconfortante.',
+      'ingredients': [
+        '180 g de pasta seca',
+        '300 g de tomate',
+        '10 ml de aceite vegetal',
+        '10 g de albahaca',
+        '3 g de sal',
+      ],
+      'ingredientKeys': ['pasta', 'tomate', 'aceite', 'albahaca', 'sal'],
+      'steps': [
+        'Cuece la pasta según el tiempo indicado en el empaque y reserva agua de cocción.',
+        'Sofríe el tomate con aceite 6 minutos a fuego medio.',
+        'Integra la pasta, albahaca y agua de cocción; mezcla 2 minutos y sirve.',
+      ],
+      'minutes': '25 min',
+      'servings': 2,
+      'category': 'comida',
+      'tag': 'Cocina casera',
+      'cuisine': 'italiana',
+      'image': 'photos/pasta.jpg',
+      'equipment': ['olla', 'sartén', 'colador'],
+      'allergens': ['gluten'],
+      'notes': ['Revisa el empaque de la pasta para alérgenos.'],
+      'source': 'Recetario original Foráneo · inicio rápido',
+      'videoUrl': '',
+    },
+    {
+      'id': 'rapida-tacos',
+      'baseId': 'rapida-tacos',
+      'title': 'Tacos de pollo y aguacate',
+      'description': 'Cena práctica con ingredientes habituales de despensa.',
+      'ingredients': [
+        '8 tortillas de maíz',
+        '250 g de pollo cocido',
+        '1 aguacate',
+        '100 g de tomate',
+        '3 g de sal',
+      ],
+      'ingredientKeys': [
+        'tortilla de maiz',
+        'pollo',
+        'aguacate',
+        'tomate',
+        'sal',
+      ],
+      'steps': [
+        'Calienta el pollo cocido 5 minutos hasta que esté completamente caliente.',
+        'Calienta las tortillas en un comal seco durante 2 minutos.',
+        'Rellena con pollo, aguacate y tomate; sazona y sirve de inmediato.',
+      ],
+      'minutes': '20 min',
+      'servings': 2,
+      'category': 'cena',
+      'tag': 'Cocina mexicana',
+      'cuisine': 'mexicana',
+      'image': 'photos/tacos.jpg',
+      'equipment': ['comal o sartén', 'tabla', 'cuchillo'],
+      'allergens': [],
+      'notes': ['Refrigera los sobrantes antes de dos horas.'],
+      'source': 'Recetario original Foráneo · inicio rápido',
+      'videoUrl': '',
+    },
+  ];
   static List<Map<String, dynamic>>? _indexedRecipes;
   static List<_RecipeIndex> _index = [];
   static const _aliases = <String, List<String>>{
@@ -201,6 +303,9 @@ class OfflineRecipes {
   static bool isRecipeAllowed(Map<String, dynamic> recipe) =>
       recipeRestrictionReason(recipe) == null;
 
+  /// Compatibility loader for tests and maintenance tools. The app itself uses
+  /// [loadIndex] first so opening Despensa and Agenda never decodes the full
+  /// cookbook during startup.
   static Future<List<Map<String, dynamic>>> load() => _loading ??= _load();
   static Future<List<Map<String, dynamic>>> _load() async {
     try {
@@ -211,6 +316,59 @@ class OfflineRecipes {
       _loading = null;
       rethrow;
     }
+  }
+
+  /// Card/search data only. Detailed steps are fetched from the matching local
+  /// asset when the user opens a recipe.
+  static Future<List<Map<String, dynamic>>> loadIndex() =>
+      _indexLoading ??= _loadIndex();
+  static Future<List<Map<String, dynamic>>> _loadIndex() async {
+    try {
+      final json = await rootBundle.loadString('assets/recipes/index.json');
+      // The compact index is intentionally small enough to decode here. Moving
+      // it through an isolate copies several megabytes and made first kitchen
+      // navigation slower on entry-level phones and Windows devices.
+      return _decodeCookbook(json);
+    } catch (_) {
+      _indexLoading = null;
+      rethrow;
+    }
+  }
+
+  /// A few complete recipes shown immediately while the searchable index is
+  /// prepared. They avoid a blank or blocked Cocina screen on slower devices.
+  static Future<List<Map<String, dynamic>>> loadFeatured() =>
+      _featuredLoading ??= _loadFeatured();
+  static Future<List<Map<String, dynamic>>> _loadFeatured() async {
+    try {
+      final json = await rootBundle.loadString('assets/recipes/featured.json');
+      return _decodeCookbook(json);
+    } catch (_) {
+      _featuredLoading = null;
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> loadDetails(
+    Map<String, dynamic> indexRecipe,
+  ) async {
+    if (indexRecipe['steps'] is List) return indexRecipe;
+    final bucket =
+        '${indexRecipe['detailBucket'] ?? indexRecipe['baseId'] ?? indexRecipe['id']}'
+            .replaceAll(RegExp(r'[^a-zA-Z0-9-]'), '-');
+    final recipes = await (_chunks[bucket] ??= _loadChunk(bucket));
+    final id = '${indexRecipe['id']}';
+    for (final recipe in recipes) {
+      if ('${recipe['id']}' == id) return recipe;
+    }
+    return null;
+  }
+
+  static Future<List<Map<String, dynamic>>> _loadChunk(String bucket) async {
+    final json = await rootBundle.loadString(
+      'assets/recipes/chunks/$bucket.json',
+    );
+    return compute(_decodeCookbook, json);
   }
 
   static List<String> _queryWords(String query) {

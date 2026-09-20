@@ -141,7 +141,9 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
       authenticated = false,
       notifications = false,
       widgetSharing = false,
-      loadFailed = false;
+      loadFailed = false,
+      catalogLoading = false,
+      catalogReady = false;
   String mode = 'system',
       inventoryQuery = '',
       category = 'Todo',
@@ -153,7 +155,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
   List<AppProduct> products = [];
   List<TodoEntry> todos = [];
   List<Recipe> customRecipes = [];
-  List<Map<String, dynamic>> catalog = [];
+  List<Map<String, dynamic>> catalog = OfflineRecipes.fallbackRecipes;
   Map<String, String> meals = {};
   Set<String> favorites = {};
   Future<void> saveQueue = Future.value();
@@ -193,7 +195,6 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
     try {
       final prefs = await SharedPreferences.getInstance();
       vault = LocalVault(prefs);
-      catalog = await OfflineRecipes.load();
       if (!vault!.hasProfile && (prefs.getBool('foraneo_guest_v2') ?? false)) {
         await restore();
         authenticated = true;
@@ -202,6 +203,11 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
       loadFailed = true;
     }
     if (mounted) setState(() => loading = false);
+    // Begin reading the compact search index after the home screen can paint.
+    // It is not awaited, so login and inventory remain immediately responsive.
+    unawaited(
+      OfflineRecipes.loadIndex().catchError((_) => <Map<String, dynamic>>[]),
+    );
     if (authenticated) {
       unawaited(launchSection());
       unawaited(restoreReminders());
@@ -371,6 +377,40 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
     return null;
   }
 
+  Future<void> ensureCatalog() async {
+    if (catalogReady || catalogLoading) return;
+    if (mounted) setState(() => catalogLoading = true);
+    try {
+      final recipes = await OfflineRecipes.loadIndex();
+      if (mounted) {
+        setState(() {
+          catalog = recipes;
+          catalogReady = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No pudimos abrir el recetario local. Intenta de nuevo.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => catalogLoading = false);
+    }
+  }
+
+  Future<void> goToSection(int index) async {
+    setState(() {
+      section = index;
+      settings = false;
+    });
+    if (index == 3) await ensureCatalog();
+  }
+
   Future<void> launchSection() async {
     final target = await NativeServices.takeLaunchSection();
     final index = {
@@ -383,10 +423,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
       'agenda': 4,
     }[target];
     if (mounted && index != null) {
-      setState(() {
-        section = index;
-        settings = false;
-      });
+      await goToSection(index);
     }
   }
 
@@ -761,10 +798,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
             if (wide)
               NavigationRail(
                 selectedIndex: settings ? null : section,
-                onDestinationSelected: (i) => setState(() {
-                  section = i;
-                  settings = false;
-                }),
+                onDestinationSelected: (i) => unawaited(goToSection(i)),
                 labelType: NavigationRailLabelType.all,
                 destinations: List.generate(
                   names.length,
@@ -807,10 +841,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
           ? null
           : NavigationBar(
               selectedIndex: section,
-              onDestinationSelected: (i) => setState(() {
-                section = i;
-                settings = false;
-              }),
+              onDestinationSelected: (i) => unawaited(goToSection(i)),
               destinations: List.generate(
                 names.length,
                 (i) => NavigationDestination(
@@ -1007,7 +1038,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
                           backgroundColor: const Color(0xffd9efb9),
                           foregroundColor: const Color(0xff163d30),
                         ),
-                        onPressed: () => setState(() => section = 3),
+                        onPressed: () => unawaited(goToSection(3)),
                         icon: const Icon(Icons.restaurant_menu, size: 18),
                         label: const Text('¿Qué cocinamos hoy?'),
                       ),
@@ -1099,7 +1130,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
         sectionTitle(
           'Algo rico, sin complicarte',
           action: TextButton(
-            onPressed: () => setState(() => section = 3),
+            onPressed: () => unawaited(goToSection(3)),
             child: const Text('Explorar'),
           ),
         ),
@@ -1709,6 +1740,34 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
   }
 
   Widget kitchenPage() {
+    if (catalogLoading && catalog.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          heading(
+            'Cocina local',
+            'Preparando tu recetario.',
+            'Abrimos únicamente el índice; cada paso a paso se carga al elegirlo.',
+          ),
+          panel(
+            const Padding(
+              padding: EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 14),
+                  Expanded(child: Text('Organizando ideas para cocinar…')),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     final source = allRecipes
         .where(
           (r) =>
@@ -1863,6 +1922,28 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
   }
 
   Future<void> showRecipe(Recipe recipe) async {
+    final catalogIndex = catalog.indexWhere(
+      (item) => '${item['id']}' == recipe.id,
+    );
+    if (catalogIndex >= 0 && recipe.steps.isEmpty) {
+      try {
+        final details = await OfflineRecipes.loadDetails(catalog[catalogIndex]);
+        if (details == null) throw StateError('missing recipe details');
+        if (!mounted) return;
+        setState(() => catalog[catalogIndex] = details);
+        await showRecipe(Recipe.fromJson(details));
+        return;
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No pudimos abrir el paso a paso de esta receta.'),
+            ),
+          );
+        }
+        return;
+      }
+    }
     final checkedIngredients = <int>{}, checkedSteps = <int>{};
     await showDialog<void>(
       context: context,
@@ -3276,7 +3357,7 @@ class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
       const SizedBox(height: 30),
       const Center(
         child: Text(
-          'Foráneo · versión 2.1.0\nHecho para sentirte en casa.',
+          'Foráneo · versión 2.2.0\nHecho para sentirte en casa.',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 12),
         ),

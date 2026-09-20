@@ -1,97 +1,1498 @@
-import './styles.css';
-import { categoryMeta, initialProducts, initialTasks } from './data.js';
-import { PRICE_TIERS, evaluateComparablePrice } from './price-rules.js';
-import { LocalAuth } from './local-auth.js';
-import { localDate, weekDates, calendarUrl, calendarIcs } from './agenda.js';
-import { validateState, safePhoto, validDate } from './state.js';
-import { getLocalRecipes, recommendLocalRecipes, missingIngredients, ingredientMatches, isRecipeAllowed } from './offline-recipes.js';
+import "./styles.css";
+import { categoryMeta, initialProducts, initialTasks } from "./data.js";
+import { PRICE_TIERS, evaluateComparablePrice } from "./price-rules.js";
+import { LocalAuth } from "./local-auth.js";
+import { localDate, weekDates, calendarUrl, calendarIcs } from "./agenda.js";
+import { validateState, safePhoto, validDate } from "./state.js";
+import {
+  getLocalRecipes,
+  loadLocalRecipes,
+  loadRecipeDetails,
+  recommendLocalRecipes,
+  missingIngredients,
+  ingredientMatches,
+  isRecipeAllowed,
+} from "./offline-recipes.js";
 
-const app=document.querySelector('#app'), BASE=import.meta.env.BASE_URL, STORE='foraneo-v2', LEGACY='casa-en-calma-v1';
-const meals=['desayuno','comida','cena'];
-const navigation=[['inicio','⌂','Inicio'],['despensa','▦','Despensa'],['compras','▱','Compras'],['cocina','♨','Cocina'],['agenda','✓','Agenda']];
-const catalog=getLocalRecipes(), catalogMap=new Map(catalog.map(r=>[r.id,r]));
-const $=selector=>document.querySelector(selector);
-const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=value=>new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(Number(value)||0);
-const norm=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-const uuid=()=>crypto.randomUUID();
-const dateLabel=(date,options={weekday:'long',day:'numeric',month:'long'})=>new Date(date+'T12:00:00').toLocaleDateString('es-MX',options);
-const fallbackPhoto=item=>!item?.title&&item?.category!=='comida'?BASE+'icon-192.png':BASE+'photos/'+(/avena|desayuno/.test(norm(item?.title||item?.name))?'avena':/arroz/.test(norm(item?.title))?'arroz':/taco|tostada/.test(norm(item?.title))?'tacos':/pasta/.test(norm(item?.title||item?.name))?'pasta':'ensalada')+'.jpg';
-const photo=(value,item)=>{const valid=safePhoto(value);return valid.startsWith('photos/')?BASE+valid:valid.startsWith('./photos/')?BASE+valid.slice(2):valid||fallbackPhoto(item);};
-const content=p=>`${p.contentValue} ${p.contentUnit}`;
-const status=p=>p.stock<=0?'urgent':p.stock<=p.lowAt?'low':'stocked';
-const button=(label,action,attrs='',style='button')=>`<button type="button" class="${style}" data-action="${action}" ${attrs}>${label}</button>`;
-const idAttr=id=>`data-id="${esc(id)}"`;
-let startupError='', auth, recoveryRequired=false;
-try{auth=new LocalAuth(localStorage);}catch{recoveryRequired=true;startupError='El perfil cifrado no pudo abrirse. Conservamos el archivo original; puedes restaurar un respaldo.';auth=new LocalAuth({getItem:()=>null,setItem:(k,v)=>localStorage.setItem(k,v)});}
-function defaults(){const breakfast=catalog.find(r=>r.category==='desayuno'),lunch=catalog.find(r=>r.category==='comida'),dinner=catalog.find(r=>r.category==='cena');return validateState({products:initialProducts.map(p=>({...p,photo:''})),recipes:[],tasks:initialTasks,shopping:[],favorites:[breakfast,lunch,dinner].filter(Boolean).map(r=>r.id),mealPlans:{[localDate()]:{desayuno:breakfast?.id||'',comida:lunch?.id||'',cena:dinner?.id||''}}});}
-function load(){if(auth.hasAccount||recoveryRequired)return defaults();try{const raw=localStorage.getItem(STORE)||localStorage.getItem(LEGACY);return raw?validateState(JSON.parse(raw)):defaults();}catch{recoveryRequired=true;startupError='No pudimos leer los datos guardados. Conservamos el archivo original; restaura un respaldo en Ajustes.';return defaults();}}
-let data=load();
-let ui={page:'inicio',category:'todos',query:'',recipeQuery:'',recipeLimit:12,kitchenTab:'recetas',agendaDate:localDate(),week:localDate(),modal:null,toast:startupError,tone:'danger',notifications:false,price:null,restoreVault:null};
-let saveQueue=Promise.resolve(), installPrompt=null, cameraStream=null, cameraRequest=0, imageDraft='', lastFocus=null;
-const productById=id=>data.products.find(p=>p.id===id);
-const recipeById=id=>data.recipes.find(r=>r.id===id)||catalogMap.get(id);
-const entryById=id=>data.shopping.find(p=>p.id===id);
-const isLocked=()=>auth.hasAccount&&!auth.unlocked;
-function notify(message,tone='success'){ui.toast=message;ui.tone=tone;clearTimeout(notify.timer);$('.toast')?.remove();app.insertAdjacentHTML('beforeend',`<div class="toast ${tone}" role="status">${esc(message)}${button('×','dismiss-toast','aria-label="Cerrar aviso"','text-button')}</div>`);notify.timer=setTimeout(()=>{ui.toast=null;$('.toast')?.remove();},5000);}
-function persist(){if(isLocked()||recoveryRequired)return Promise.resolve();const snapshot=JSON.parse(JSON.stringify(data));saveQueue=saveQueue.catch(()=>{}).then(async()=>{if(auth.hasAccount)await auth.save(snapshot);else localStorage.setItem(STORE,JSON.stringify(snapshot));}).catch(error=>{notify('No se pudo guardar. Puede faltar espacio: exporta un respaldo en Ajustes.','danger');throw error;});saveQueue.catch(()=>{});return saveQueue;}
-function commit(message){syncStock();persist();render();if(message)notify(message);}
-function applyTheme(){document.documentElement.dataset.theme=data.settings.theme;try{localStorage.setItem('foraneo-theme',data.settings.theme);}catch{}$('meta[name="theme-color"]').content=data.settings.theme==='dark'?'#101e19':'#0b3b2e';}
-function stopCamera(){cameraRequest++;cameraStream?.getTracks().forEach(track=>track.stop());cameraStream=null;}
-function openModal(type,values={}){lastFocus=document.activeElement;stopCamera();imageDraft='';ui.modal={type,...values};render();setTimeout(()=>$('.dialog input:not([type="hidden"]), .dialog button')?.focus(),20);}
-function closeModal(){stopCamera();ui.modal=null;imageDraft='';render();lastFocus?.focus();}
-function shopping(kind){return[...data.products.filter(p=>status(p)===kind).map(p=>({id:p.id,productId:p.id,name:p.name,category:p.category,detail:content(p),image:p.photo,price:p.usualPrice,kind})),...data.shopping.filter(p=>p.kind===kind)];}
-async function deviceNotification(title,body,tag){if(!data.settings.notifications||!('Notification'in window)||Notification.permission!=='granted')return;try{const registration=await navigator.serviceWorker?.getRegistration(BASE);if(registration)await registration.showNotification(title,{body,icon:BASE+'icon-192.png',badge:BASE+'favicon.png',tag,data:{url:BASE}});else new Notification(title,{body,icon:BASE+'icon-192.png',tag});}catch{/* In-app inbox remains available. */}}
-function syncStock(){const ids=new Set(data.products.map(p=>p.id));data.notifications=data.notifications.filter(n=>!n.id.startsWith('stock:')||ids.has(n.id.split(':')[1]));data.products.forEach(p=>{const kind=status(p),id=`stock:${p.id}:${kind}`,exists=data.notifications.some(n=>n.id===id);data.notifications=data.notifications.filter(n=>!n.id.startsWith(`stock:${p.id}:`)||n.id===id);if(kind!=='stocked'&&!exists){const title=kind==='urgent'?`${p.name} se terminó`:`Queda poco de ${p.name}`;data.notifications.unshift({id,title,body:kind==='urgent'?'Está en compras urgentes.':'Está en tu lista para comprar.',read:false,time:new Date().toISOString()});deviceNotification('Foráneo · '+title,'Revisa tu lista de compras.',id);}});data.notifications=data.notifications.slice(0,100);}
-function checkReminders(){if(isLocked()||recoveryRequired)return;let changed=false;data.tasks.forEach(t=>{if(!t.completed&&!t.reminded&&new Date(`${t.date}T${t.time}:00`).getTime()<=Date.now()){t.reminded=true;changed=true;data.notifications.unshift({id:'task:'+t.id,title:t.title,body:'Tienes un pendiente en tu agenda.',read:false,time:new Date().toISOString()});deviceNotification('Foráneo · Recordatorio',t.title,'task:'+t.id);}});if(changed){data.notifications=data.notifications.slice(0,100);persist();if(!ui.modal)render();}}
-function empty(title,message){return `<div class="empty"><span>✦</span><h3>${esc(title)}</h3><p>${esc(message)}</p></div>`;}
-function header(){const title={inicio:`Un hogar más ligero${data.settings.displayName?', '+data.settings.displayName:''}.`,despensa:'Lo que hace hogar.',compras:'Compra bien. Vive mejor.',cocina:'¿Qué cocinamos hoy?',agenda:'Haz espacio para tu semana.',ajustes:'A tu manera.'};const subtitle={inicio:'Pequeñas cosas en orden, más tiempo para ti.',despensa:'Cuida lo que tienes. Anticípate a lo que falta.',compras:'Tu lista y el precio justo, siempre a la mano.',cocina:'Ideas detalladas para cocinar hoy.',agenda:'Tus pendientes, tus planes y un poco de calma.',ajustes:'Personaliza tu rincón, con tus datos bajo tu control.'};return `<header class="topbar"><div><p class="eyebrow">${esc(dateLabel(localDate()))}</p><h1>${esc(title[ui.page])}</h1><p class="muted">${subtitle[ui.page]}</p></div><div class="top-actions">${button('♧','notifications','aria-label="Notificaciones"','circle')}${data.notifications.some(n=>!n.read)?'<span class="notification-dot"></span>':''}${button('⚙','navigate','data-page="ajustes" aria-label="Abrir ajustes"','circle')}</div></header>`;}
-function dashboard(){const urgent=shopping('urgent'),low=shopping('low'),tasks=data.tasks.filter(t=>!t.completed&&t.date<=localDate()),plan=data.mealPlans[localDate()]||{},todayMeal=meals.map(m=>recipeById(plan[m])).find(Boolean)||recommendLocalRecipes({pantry:data.products,limit:1})[0];return `<section class="hero"><div class="hero-copy"><span class="light-label">BIENVENIDO A TU RINCÓN</span><h2>Tu casa, contigo.<br>Todo empieza aquí.</h2><p>Menos pendientes en la cabeza.<br>Más momentos para sentirte en casa.</p>${button('Organizar mi despensa ↗','navigate','data-page="despensa"','button cream')}</div><img src="${BASE}photos/ensalada.jpg" alt="Ingredientes frescos para cocinar en casa" class="hero-photo"><span class="hero-note">Hecho para tu día a día ♡</span></section><section class="stats"><button data-action="navigate" data-page="despensa"><span>▦</span><strong>${data.products.length}</strong><small>productos en casa</small></button><button data-action="navigate" data-page="compras" class="${urgent.length?'danger-stat':''}"><span>▱</span><strong>${urgent.length+low.length}</strong><small>por comprar · ${urgent.length} urgentes</small></button><button data-action="navigate" data-page="agenda"><span>✓</span><strong>${tasks.length}</strong><small>pendientes para hoy</small></button></section><div class="dashboard-grid"><section class="panel"><div class="section-heading"><div><p class="eyebrow">LO IMPORTANTE PRIMERO</p><h2>Un vistazo a casa</h2></div>${button('Ver todo →','navigate','data-page="compras"','text-button')}</div>${[...urgent,...low].slice(0,4).map(e=>shoppingRow(e,true)).join('')||empty('Todo está en orden','No tienes compras pendientes. Qué gusto.')}</section><section class="panel meal-feature"><div class="section-heading"><div><p class="eyebrow">A LA MESA</p><h2>Una idea para hoy</h2></div><span>♨</span></div>${todayMeal?recipeCard(todayMeal):empty('Tu recetario está listo','Busca un ingrediente en Cocina.')}</section></div><section class="home-bottom"><div><p class="eyebrow">UN POCO DE CALMA</p><h2>Tu semana también merece espacio.</h2><p class="muted">Organiza desayuno, comida, cena y los pendientes que importan.</p></div>${button('Abrir mi agenda →','navigate','data-page="agenda"')}</section>`;}
-function productCard(p){return `<article class="product-card"><button class="product-image" data-action="edit-product" ${idAttr(p.id)}><img src="${esc(photo(p.photo,p))}" alt="${esc(p.name)}" loading="lazy"><span class="badge ${status(p)}">${status(p)==='urgent'?'Se terminó':status(p)==='low'?'Queda poco':'En casa'}</span></button><div class="product-copy"><span class="eyebrow">${esc(categoryMeta[p.category]?.label||'Otros')}</span><h3>${esc(p.name)}</h3><p class="muted clamp">${esc(p.description||'Un básico de tu hogar')}</p><div class="price-line"><strong>${money(p.usualPrice)}</strong><span>${esc(content(p))}</span></div><div class="stock-control">${button('−','consume',`${idAttr(p.id)} aria-label="Consumir una unidad de ${esc(p.name)}"`,'small-circle')}<span><b>${p.stock}</b> en casa</span>${button('+','restock',`${idAttr(p.id)} aria-label="Añadir una unidad de ${esc(p.name)}"`,'small-circle')}</div><div class="card-actions">${button('Editar','edit-product',idAttr(p.id),'text-button')}${p.category==='comida'?button('Cocinar ↗','food-recipes',idAttr(p.id),'text-button'):''}${button('Eliminar','delete-product',idAttr(p.id),'text-button danger-text')}</div></div></article>`;}
-function inventory(){const products=data.products.filter(p=>(ui.category==='todos'||ui.category===p.category)&&norm(p.name+' '+p.description).includes(norm(ui.query)));return `<div class="page-toolbar"><div><p class="eyebrow">TU INVENTARIO</p><h2>Todo en su lugar <span class="count">${data.products.length}</span></h2></div>${button('+ Añadir producto','new-product')}</div><form id="inventory-search" class="search-box"><span>⌕</span><input name="query" aria-label="Buscar en despensa" placeholder="Buscar en tu despensa…" value="${esc(ui.query)}"><button>Buscar</button></form><div class="chips" aria-label="Categorías">${[['todos',{label:'Todo',emoji:'✦'}],...Object.entries(categoryMeta)].map(([key,value])=>button(value.emoji+' '+value.label,'category',`data-category="${key}" aria-pressed="${ui.category===key}"`,'chip'+(ui.category===key?' selected':''))).join('')}</div><div class="product-grid">${products.map(productCard).join('')||empty('Espacio para lo que necesitas','Añade un producto o prueba otra búsqueda.')}</div>`;}
-function shoppingRow(e,compact=false){const p=productById(e.productId);return `<article class="shopping-row ${e.kind==='urgent'?'urgent-row':''}"><img src="${esc(photo(e.image,e))}" alt="" loading="lazy"><div class="shopping-copy"><span class="eyebrow">${e.kind==='urgent'?'COMPRA URGENTE':'POR COMPRAR'}</span><h3>${esc(e.name)}</h3><p>${esc(e.detail||'Añadido a tu lista')}${e.price?' · '+money(e.price):''}</p></div><div class="shopping-actions">${compact?button('→','navigate','data-page="compras" aria-label="Ver compras"','small-circle'):button('✓','buy-shopping',`${idAttr(e.id)} data-product="${p?'yes':''}" aria-label="Marcar comprado: ${esc(e.name)}"`,'small-circle')}${!compact?button('Editar',p?'edit-product':'edit-shopping',idAttr(e.id),'text-button'):''}${!compact?button('Eliminar',p?'delete-product':'delete-shopping',idAttr(e.id),'text-button danger-text'):''}</div></article>`;}
-function purchases(){return `<div class="page-toolbar"><div><p class="eyebrow">UNA LISTA QUE TE CUIDA</p><h2>Lo que falta en casa</h2></div>${button('+ Añadir a compras','new-shopping')}</div><div class="shopping-layout"><div><section class="panel"><div class="section-heading"><h2><span class="red-dot"></span> Compra urgente</h2><span class="count">${shopping('urgent').length}</span></div>${shopping('urgent').map(e=>shoppingRow(e)).join('')||empty('Sin urgencias','Ningún producto se ha terminado.')}</section><section class="panel"><div class="section-heading"><h2>Para la próxima compra</h2><span class="count">${shopping('low').length}</span></div>${shopping('low').map(e=>shoppingRow(e)).join('')||empty('Tu lista está al día','Aquí aparecerán los productos que estén por terminarse.')}</section></div><aside class="panel price-panel"><p class="eyebrow">TU SEMÁFORO DE PRECIOS</p><h2>¿Vale la pena?</h2><p class="muted">Compara el precio por el mismo contenido, aunque cambie el tamaño del empaque.</p>${data.products.length?priceForm():empty('Primero un producto','Guarda su precio habitual en Despensa.')}<details><summary>Conoce tus márgenes</summary><table><thead><tr><th>Precio habitual</th><th>Oferta</th><th>No comprar</th></tr></thead><tbody>${PRICE_TIERS.map(t=>`<tr><td>${esc(t.label)}</td><td>−${t.discountPercent}%</td><td>+${t.increasePercent}%</td></tr>`).join('')}</tbody></table><p class="fine">Entre $1,000 y $2,000 se usa también el margen conservador de 1%. En el límite superior, la señal es roja.</p></details></aside></div>`;}
-function units(selected){return['g','kg','ml','L','piezas','rollos','paquetes'].map(unit=>`<option ${selected===unit?'selected':''}>${unit}</option>`).join('');}
-function priceForm(){const p=productById(ui.price?.productId)||data.products[0],r=ui.price?.result;return `<form id="price-form" class="form-stack"><label>Producto<select name="productId" id="compare-product">${data.products.map(item=>`<option value="${esc(item.id)}" ${p.id===item.id?'selected':''}>${esc(item.name)} · ${money(item.usualPrice)}</option>`).join('')}</select></label><label>Precio que encontraste ($)<input name="price" type="number" min="0" step="0.01" required value="${ui.price?.price??''}" placeholder="0.00"></label><div class="form-grid"><label>Contenido nuevo<input name="contentValue" type="number" min="0.001" step="any" required value="${esc(ui.price?.contentValue??p.contentValue)}"></label><label>Unidad<select name="contentUnit">${units(ui.price?.contentUnit||p.contentUnit)}</select></label></div><button class="button">Comparar precio</button></form>${r?`<div class="price-result ${r.decision}" role="status"><span>${r.decision==='avoid'?'✕':r.decision==='deal'?'♡':'✓'}</span><h3>${r.decision==='deal'?'¡Por favor, cómpralo!':esc(r.label)}</h3><p>${esc(r.message)}</p>${r.comparablePrice!=null?`<small>Equivale a ${money(r.comparablePrice)} por ${esc(content(p))}.</small>`:''}${['deal','approved','avoid'].includes(r.decision)?button('Registrar compra','register-purchase','','button secondary'):''}</div>`:''}`;}
-function recipeCard(r){const missing=missingIngredients(r,data.products),available=r.ingredients.length-missing.length;return `<article class="recipe-card"><button class="recipe-photo" data-action="recipe" ${idAttr(r.id)}><img src="${esc(photo(r.image,r))}" alt="${esc(r.title)}" loading="lazy"><span class="recipe-tag">${esc(r.tag||r.category||'Hecha en casa')}</span></button><div class="recipe-copy"><div class="recipe-meta"><span>◷ ${esc(r.minutes||(/min/.test(String(r.time))?r.time:r.time+' min'))}</span><span>♧ ${r.servings} porciones</span></div><h3>${esc(r.title)}</h3><p class="muted clamp">${esc(r.description)}</p><div class="coverage"><span style="width:${Math.max(0,available)/Math.max(1,r.ingredients.length)*100}%"></span></div><div class="recipe-footer"><small>${missing.length?`${available}/${r.ingredients.length} ingredientes disponibles`:'Todo listo para cocinar'}</small>${button('Ver receta →','recipe',idAttr(r.id),'text-button')}</div></div></article>`;}
-function kitchen(){let recipes=ui.kitchenTab==='favoritas'?[...new Map([...data.recipes,...data.favorites.map(recipeById).filter(Boolean)].map(r=>[r.id,r])).values()].filter(r=>isRecipeAllowed(r)&&norm(r.title).includes(norm(ui.recipeQuery))):recommendLocalRecipes({query:ui.recipeQuery,pantry:data.products,limit:ui.recipeLimit});return `<section class="kitchen-intro"><div><p class="eyebrow">COCINA SIN COMPLICARTE</p><h2>Una buena comida<br>empieza con lo que tienes.</h2><p>${catalog.length.toLocaleString('es-MX')} recetas detalladas para descubrir, guardar y cocinar a tu ritmo.</p></div><img src="${BASE}photos/pasta.jpg" alt="Un plato de pasta preparado en casa"></section><div class="page-toolbar"><div class="tabs">${[['recetas','Descubrir'],['favoritas','Mis recetas'],['menu','Menú semanal']].map(([key,label])=>button(label,'kitchen-tab',`data-tab="${key}"`,'tab'+(ui.kitchenTab===key?' active':''))).join('')}</div>${button('+ Mi receta','new-recipe','','button secondary')}</div>${ui.kitchenTab==='menu'?mealPlanner():`<form id="recipe-search" class="search-box"><span>⌕</span><input name="query" placeholder="¿Qué tienes? Pasta, avena, atún…" aria-label="Ingrediente o receta" value="${esc(ui.recipeQuery)}"><button>Recomendar</button></form><div class="recipe-grid">${recipes.map(recipeCard).join('')||empty('No encontramos una receta','Prueba con un ingrediente más sencillo o agrega una receta propia.')}</div>${ui.kitchenTab==='recetas'&&ui.recipeLimit<200&&recipes.length>=ui.recipeLimit?`<div class="center">${button('Más ideas para cocinar ↓','more-recipes','','button secondary')}</div>`:''}`}`;}
-function weekControl(anchor,scope){return `<div class="week-control">${button('←','week-prev',`data-scope="${scope}" aria-label="Semana anterior"`,'circle')}<strong>${esc(dateLabel(weekDates(anchor)[0],{day:'numeric',month:'short'}))} — ${esc(dateLabel(weekDates(anchor)[6],{day:'numeric',month:'short'}))}</strong>${button('→','week-next',`data-scope="${scope}" aria-label="Semana siguiente"`,'circle')}${button('Hoy','week-today',`data-scope="${scope}"`,'text-button')}</div>`;}
-function mealPlanner(){return `<section class="panel"><h2>Tu mesa, toda la semana</h2><p class="muted">Elige cada comida. Los ingredientes que falten pueden ir a tu lista.</p>${weekControl(ui.week,'kitchen')}<div class="week-grid">${weekDates(ui.week).map(date=>`<article class="day-card ${date===localDate()?'today':''}"><h3>${esc(dateLabel(date,{weekday:'short',day:'numeric'}))}</h3>${meals.map(meal=>{const r=recipeById(data.mealPlans[date]?.[meal]);return `<div class="meal-slot"><span class="eyebrow">${meal}</span>${r?`<button class="meal-name" data-action="recipe" ${idAttr(r.id)}>${esc(r.title)}</button>`:'<p class="muted">Un espacio para algo rico</p>'}${button(r?'Cambiar':'＋ Elegir','plan-slot',`data-date="${date}" data-meal="${meal}"`,'text-button')}</div>`;}).join('')}</article>`).join('')}</div></section>`;}
-function taskRow(t){return `<article class="task-row ${t.completed?'completed':''}"><input type="checkbox" data-task="${esc(t.id)}" ${t.completed?'checked':''} aria-label="Completar ${esc(t.title)}"><div><h3>${esc(t.title)}</h3><p>${esc(t.time)} · ${esc(dateLabel(t.date,{day:'numeric',month:'short'}))}${t.priority==='alta'?' · Prioridad alta':''}</p>${t.notes?`<small>${esc(t.notes)}</small>`:''}</div>${button('Editar','edit-task',idAttr(t.id),'text-button')}<a class="calendar-link" href="${esc(calendarUrl(t))}" target="_blank" rel="noopener noreferrer" aria-label="Añadir ${esc(t.title)} a Google Calendar">G ↗</a></article>`;}
-function agenda(){const dates=weekDates(ui.agendaDate),filtered=data.tasks.filter(t=>t.date===ui.agendaDate).sort((a,b)=>Number(a.completed)-Number(b.completed)||a.time.localeCompare(b.time)),overdue=data.tasks.filter(t=>!t.completed&&t.date<localDate());return `<div class="page-toolbar"><div><p class="eyebrow">PASO A PASO</p><h2>Lo importante tiene su momento.</h2></div>${button('+ Nuevo pendiente','new-task')}</div><section class="panel">${weekControl(ui.agendaDate,'agenda')}<div class="agenda-week">${dates.map(date=>button(`<span>${esc(dateLabel(date,{weekday:'short'}))}</span><strong>${new Date(date+'T12:00').getDate()}</strong><small>${data.tasks.filter(t=>t.date===date&&!t.completed).length} pendientes</small>`,'select-date',`data-date="${date}"`,'agenda-day'+(date===ui.agendaDate?' selected':'')+(date===localDate()?' is-today':''))).join('')}</div><div class="section-heading selected-day"><h2>${esc(dateLabel(ui.agendaDate))}</h2><label class="date-picker">Ir a fecha<input id="agenda-date" type="date" value="${ui.agendaDate}" aria-label="Fecha de agenda"></label></div>${filtered.map(taskRow).join('')||empty('Un día con espacio','Añade un pendiente o disfruta este momento de calma.')}</section>${overdue.length?`<section class="panel"><h2>Para retomar <span class="count">${overdue.length}</span></h2>${overdue.slice(0,20).map(taskRow).join('')}</section>`:''}<section class="calendar-note"><span>▦</span><div><h3>Tu agenda, también en Google Calendar</h3><p>El botón G ↗ abre un evento listo para guardar. Tú confirmas en Google; no hay sincronización automática ni acceso a tu calendario.</p></div>${button('Exportar semana (.ics)','export-calendar','','button secondary')}</section>`;}
-function settings(){return `<div class="settings-grid"><section class="panel"><p class="eyebrow">TU RINCÓN</p><h2>Se siente como tú</h2><form id="settings-form" class="form-stack"><label>¿Cómo te llamamos?<input name="displayName" maxlength="80" value="${esc(data.settings.displayName)}"></label><label>Apariencia<select name="theme">${[['system','Igual que mi dispositivo'],['light','Claro · Hogar luminoso'],['dark','Oscuro · Noche tranquila']].map(([value,label])=>`<option value="${value}" ${data.settings.theme===value?'selected':''}>${label}</option>`).join('')}</select></label><button class="button">Guardar preferencias</button></form></section><section class="panel"><p class="eyebrow">A TIEMPO</p><h2>Notificaciones y pantalla de inicio</h2><p class="muted">Recibe avisos de productos y pendientes mientras la web está abierta. Para notificaciones con la app cerrada y widgets reales de Android, instala el APK.</p><div class="settings-actions">${button(data.settings.notifications?'Enviar aviso de prueba':'Activar notificaciones','enable-notifications')}${data.settings.notifications?button('Desactivar avisos','disable-notifications','','text-button'):''}${button('Instalar versión web','install','','button secondary')}<a class="button secondary" href="https://github.com/JosephT2244/Foraneo/releases/latest" target="_blank" rel="noopener noreferrer">Descargar app Android / Windows ↗</a></div><p class="fine">La instalación web añade un icono; no crea widgets nativos. En iPhone/iPad: Compartir → Añadir a pantalla de inicio.</p></section><section class="panel"><p class="eyebrow">PRIVACIDAD LOCAL</p><h2>${auth.hasAccount?'Tu perfil está protegido':'Tu hogar, con contraseña'}</h2><p class="muted">${auth.hasAccount?`Sesión de ${esc(auth.username)}. Tus datos se guardan cifrados en este navegador.`:'Crea un usuario local y una contraseña para cifrar tus datos en este navegador. No se crea una cuenta en internet.'}</p><div class="settings-actions">${button(auth.hasAccount?'Cambiar contraseña':'Crear perfil local','create-profile')}${auth.hasAccount?button('Cerrar sesión','lock','','button secondary'):''}</div><p class="fine">No hay recuperación por correo ni sincronización entre dispositivos. Conserva tu contraseña y un respaldo. Cada navegador y app guarda su propio perfil.</p></section><section class="panel"><p class="eyebrow">TODO BAJO TU CONTROL</p><h2>Respaldos y portabilidad</h2><p class="muted">Exporta tus productos, recetas y agenda. ${auth.hasAccount?'El respaldo se cifra con tu contraseña.':'Sin perfil, el respaldo contiene tus datos sin cifrar: guárdalo en un lugar seguro.'}</p><div class="settings-actions">${button('Exportar respaldo','export-backup')}${button('Restaurar respaldo','import-backup','','button secondary')}<input id="backup-file" type="file" accept=".json,application/json" hidden></div><p class="fine">Los respaldos web se importan en Foráneo web. No compartas archivos con información privada.</p></section></div><section class="about"><img src="${BASE}icon-192.png" alt="Logo de Foráneo"><h2>Foráneo</h2><p>Tu casa, contigo. Versión 2.0 · Recetario sin API</p><small>by Joseph Ubaldo Trejo Hernandez</small></section>`;}
+const app = document.querySelector("#app"),
+  BASE = import.meta.env.BASE_URL,
+  STORE = "foraneo-v2",
+  LEGACY = "casa-en-calma-v1";
+const meals = ["desayuno", "comida", "cena"];
+const navigation = [
+  ["inicio", "⌂", "Inicio"],
+  ["despensa", "▦", "Despensa"],
+  ["compras", "▱", "Compras"],
+  ["cocina", "♨", "Cocina"],
+  ["agenda", "✓", "Agenda"],
+];
+let catalog = getLocalRecipes(),
+  catalogMap = new Map(catalog.map((r) => [r.id, r])),
+  catalogLoaded = false;
+const $ = (selector) => document.querySelector(selector);
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const money = (value) =>
+  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(
+    Number(value) || 0,
+  );
+const norm = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+const uuid = () => crypto.randomUUID();
+const dateLabel = (
+  date,
+  options = { weekday: "long", day: "numeric", month: "long" },
+) => new Date(date + "T12:00:00").toLocaleDateString("es-MX", options);
+const fallbackPhoto = (item) =>
+  !item?.title && item?.category !== "comida"
+    ? BASE + "icon-192.png"
+    : BASE +
+      "photos/" +
+      (/avena|desayuno/.test(norm(item?.title || item?.name))
+        ? "avena"
+        : /arroz/.test(norm(item?.title))
+          ? "arroz"
+          : /taco|tostada/.test(norm(item?.title))
+            ? "tacos"
+            : /pasta/.test(norm(item?.title || item?.name))
+              ? "pasta"
+              : "ensalada") +
+      ".jpg";
+const photo = (value, item) => {
+  const valid = safePhoto(value);
+  return valid.startsWith("photos/")
+    ? BASE + valid
+    : valid.startsWith("./photos/")
+      ? BASE + valid.slice(2)
+      : valid || fallbackPhoto(item);
+};
+const content = (p) => `${p.contentValue} ${p.contentUnit}`;
+const status = (p) =>
+  p.stock <= 0 ? "urgent" : p.stock <= p.lowAt ? "low" : "stocked";
+const button = (label, action, attrs = "", style = "button") =>
+  `<button type="button" class="${style}" data-action="${action}" ${attrs}>${label}</button>`;
+const idAttr = (id) => `data-id="${esc(id)}"`;
+let startupError = "",
+  auth,
+  recoveryRequired = false;
+try {
+  auth = new LocalAuth(localStorage);
+} catch {
+  recoveryRequired = true;
+  startupError =
+    "El perfil cifrado no pudo abrirse. Conservamos el archivo original; puedes restaurar un respaldo.";
+  auth = new LocalAuth({
+    getItem: () => null,
+    setItem: (k, v) => localStorage.setItem(k, v),
+  });
+}
+function defaults() {
+  const breakfast = catalog.find((r) => r.category === "desayuno"),
+    lunch = catalog.find((r) => r.category === "comida"),
+    dinner = catalog.find((r) => r.category === "cena");
+  return validateState({
+    products: initialProducts.map((p) => ({ ...p, photo: "" })),
+    recipes: [],
+    tasks: initialTasks,
+    shopping: [],
+    favorites: [breakfast, lunch, dinner].filter(Boolean).map((r) => r.id),
+    mealPlans: {
+      [localDate()]: {
+        desayuno: breakfast?.id || "",
+        comida: lunch?.id || "",
+        cena: dinner?.id || "",
+      },
+    },
+  });
+}
+function load() {
+  if (auth.hasAccount || recoveryRequired) return defaults();
+  try {
+    const raw = localStorage.getItem(STORE) || localStorage.getItem(LEGACY);
+    return raw ? validateState(JSON.parse(raw)) : defaults();
+  } catch {
+    recoveryRequired = true;
+    startupError =
+      "No pudimos leer los datos guardados. Conservamos el archivo original; restaura un respaldo en Ajustes.";
+    return defaults();
+  }
+}
+let data = load();
+let ui = {
+  page: "inicio",
+  category: "todos",
+  query: "",
+  recipeQuery: "",
+  recipeLimit: 12,
+  kitchenTab: "recetas",
+  agendaDate: localDate(),
+  week: localDate(),
+  modal: null,
+  toast: startupError,
+  tone: "danger",
+  notifications: false,
+  price: null,
+  restoreVault: null,
+};
+let saveQueue = Promise.resolve(),
+  installPrompt = null,
+  cameraStream = null,
+  cameraRequest = 0,
+  imageDraft = "",
+  lastFocus = null;
+const productById = (id) => data.products.find((p) => p.id === id);
+const recipeById = (id) =>
+  data.recipes.find((r) => r.id === id) || catalogMap.get(id);
+async function ensureCatalog() {
+  if (catalogLoaded) return;
+  catalog = await loadLocalRecipes(BASE);
+  catalogMap = new Map(catalog.map((r) => [r.id, r]));
+  catalogLoaded = true;
+}
+async function ensureRecipeDetails(id) {
+  await ensureCatalog();
+  const recipe = recipeById(id);
+  if (
+    !recipe ||
+    data.recipes.some((value) => value.id === id) ||
+    Array.isArray(recipe.steps)
+  )
+    return recipe;
+  const full = await loadRecipeDetails(id, BASE);
+  if (full) {
+    catalogMap.set(id, full);
+    const index = catalog.findIndex((value) => value.id === id);
+    if (index >= 0) catalog[index] = full;
+  }
+  return full;
+}
+const entryById = (id) => data.shopping.find((p) => p.id === id);
+const isLocked = () => auth.hasAccount && !auth.unlocked;
+function notify(message, tone = "success") {
+  ui.toast = message;
+  ui.tone = tone;
+  clearTimeout(notify.timer);
+  $(".toast")?.remove();
+  app.insertAdjacentHTML(
+    "beforeend",
+    `<div class="toast ${tone}" role="status">${esc(message)}${button("×", "dismiss-toast", 'aria-label="Cerrar aviso"', "text-button")}</div>`,
+  );
+  notify.timer = setTimeout(() => {
+    ui.toast = null;
+    $(".toast")?.remove();
+  }, 5000);
+}
+function persist() {
+  if (isLocked() || recoveryRequired) return Promise.resolve();
+  const snapshot = JSON.parse(JSON.stringify(data));
+  saveQueue = saveQueue
+    .catch(() => {})
+    .then(async () => {
+      if (auth.hasAccount) await auth.save(snapshot);
+      else localStorage.setItem(STORE, JSON.stringify(snapshot));
+    })
+    .catch((error) => {
+      notify(
+        "No se pudo guardar. Puede faltar espacio: exporta un respaldo en Ajustes.",
+        "danger",
+      );
+      throw error;
+    });
+  saveQueue.catch(() => {});
+  return saveQueue;
+}
+function commit(message) {
+  syncStock();
+  persist();
+  render();
+  if (message) notify(message);
+}
+function applyTheme() {
+  document.documentElement.dataset.theme = data.settings.theme;
+  try {
+    localStorage.setItem("foraneo-theme", data.settings.theme);
+  } catch {}
+  $('meta[name="theme-color"]').content =
+    data.settings.theme === "dark" ? "#101e19" : "#0b3b2e";
+}
+function stopCamera() {
+  cameraRequest++;
+  cameraStream?.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+}
+function openModal(type, values = {}) {
+  lastFocus = document.activeElement;
+  stopCamera();
+  imageDraft = "";
+  ui.modal = { type, ...values };
+  render();
+  setTimeout(
+    () => $('.dialog input:not([type="hidden"]), .dialog button')?.focus(),
+    20,
+  );
+}
+function closeModal() {
+  stopCamera();
+  ui.modal = null;
+  imageDraft = "";
+  render();
+  lastFocus?.focus();
+}
+function shopping(kind) {
+  return [
+    ...data.products
+      .filter((p) => status(p) === kind)
+      .map((p) => ({
+        id: p.id,
+        productId: p.id,
+        name: p.name,
+        category: p.category,
+        detail: content(p),
+        image: p.photo,
+        price: p.usualPrice,
+        kind,
+      })),
+    ...data.shopping.filter((p) => p.kind === kind),
+  ];
+}
+async function deviceNotification(title, body, tag) {
+  if (
+    !data.settings.notifications ||
+    !("Notification" in window) ||
+    Notification.permission !== "granted"
+  )
+    return;
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration(BASE);
+    if (registration)
+      await registration.showNotification(title, {
+        body,
+        icon: BASE + "icon-192.png",
+        badge: BASE + "favicon.png",
+        tag,
+        data: { url: BASE },
+      });
+    else new Notification(title, { body, icon: BASE + "icon-192.png", tag });
+  } catch {
+    /* In-app inbox remains available. */
+  }
+}
+function syncStock() {
+  const ids = new Set(data.products.map((p) => p.id));
+  data.notifications = data.notifications.filter(
+    (n) => !n.id.startsWith("stock:") || ids.has(n.id.split(":")[1]),
+  );
+  data.products.forEach((p) => {
+    const kind = status(p),
+      id = `stock:${p.id}:${kind}`,
+      exists = data.notifications.some((n) => n.id === id);
+    data.notifications = data.notifications.filter(
+      (n) => !n.id.startsWith(`stock:${p.id}:`) || n.id === id,
+    );
+    if (kind !== "stocked" && !exists) {
+      const title =
+        kind === "urgent" ? `${p.name} se terminó` : `Queda poco de ${p.name}`;
+      data.notifications.unshift({
+        id,
+        title,
+        body:
+          kind === "urgent"
+            ? "Está en compras urgentes."
+            : "Está en tu lista para comprar.",
+        read: false,
+        time: new Date().toISOString(),
+      });
+      deviceNotification(
+        "Foráneo · " + title,
+        "Revisa tu lista de compras.",
+        id,
+      );
+    }
+  });
+  data.notifications = data.notifications.slice(0, 100);
+}
+function checkReminders() {
+  if (isLocked() || recoveryRequired) return;
+  let changed = false;
+  data.tasks.forEach((t) => {
+    if (
+      !t.completed &&
+      !t.reminded &&
+      new Date(`${t.date}T${t.time}:00`).getTime() <= Date.now()
+    ) {
+      t.reminded = true;
+      changed = true;
+      data.notifications.unshift({
+        id: "task:" + t.id,
+        title: t.title,
+        body: "Tienes un pendiente en tu agenda.",
+        read: false,
+        time: new Date().toISOString(),
+      });
+      deviceNotification("Foráneo · Recordatorio", t.title, "task:" + t.id);
+    }
+  });
+  if (changed) {
+    data.notifications = data.notifications.slice(0, 100);
+    persist();
+    if (!ui.modal) render();
+  }
+}
+function empty(title, message) {
+  return `<div class="empty"><span>✦</span><h3>${esc(title)}</h3><p>${esc(message)}</p></div>`;
+}
+function header() {
+  const title = {
+    inicio: `Un hogar más ligero${data.settings.displayName ? ", " + data.settings.displayName : ""}.`,
+    despensa: "Lo que hace hogar.",
+    compras: "Compra bien. Vive mejor.",
+    cocina: "¿Qué cocinamos hoy?",
+    agenda: "Haz espacio para tu semana.",
+    ajustes: "A tu manera.",
+  };
+  const subtitle = {
+    inicio: "Pequeñas cosas en orden, más tiempo para ti.",
+    despensa: "Cuida lo que tienes. Anticípate a lo que falta.",
+    compras: "Tu lista y el precio justo, siempre a la mano.",
+    cocina: "Ideas detalladas para cocinar hoy.",
+    agenda: "Tus pendientes, tus planes y un poco de calma.",
+    ajustes: "Personaliza tu rincón, con tus datos bajo tu control.",
+  };
+  return `<header class="topbar"><div><p class="eyebrow">${esc(dateLabel(localDate()))}</p><h1>${esc(title[ui.page])}</h1><p class="muted">${subtitle[ui.page]}</p></div><div class="top-actions">${button("♧", "notifications", 'aria-label="Notificaciones"', "circle")}${data.notifications.some((n) => !n.read) ? '<span class="notification-dot"></span>' : ""}${button("⚙", "navigate", 'data-page="ajustes" aria-label="Abrir ajustes"', "circle")}</div></header>`;
+}
+function dashboard() {
+  const urgent = shopping("urgent"),
+    low = shopping("low"),
+    tasks = data.tasks.filter((t) => !t.completed && t.date <= localDate()),
+    plan = data.mealPlans[localDate()] || {},
+    todayMeal =
+      meals.map((m) => recipeById(plan[m])).find(Boolean) ||
+      recommendLocalRecipes({ pantry: data.products, limit: 1 })[0];
+  return `<section class="hero"><div class="hero-copy"><span class="light-label">BIENVENIDO A TU RINCÓN</span><h2>Tu casa, contigo.<br>Todo empieza aquí.</h2><p>Menos pendientes en la cabeza.<br>Más momentos para sentirte en casa.</p>${button("Organizar mi despensa ↗", "navigate", 'data-page="despensa"', "button cream")}</div><img src="${BASE}photos/ensalada.jpg" alt="Ingredientes frescos para cocinar en casa" class="hero-photo"><span class="hero-note">Hecho para tu día a día ♡</span></section><section class="stats"><button data-action="navigate" data-page="despensa"><span>▦</span><strong>${data.products.length}</strong><small>productos en casa</small></button><button data-action="navigate" data-page="compras" class="${urgent.length ? "danger-stat" : ""}"><span>▱</span><strong>${urgent.length + low.length}</strong><small>por comprar · ${urgent.length} urgentes</small></button><button data-action="navigate" data-page="agenda"><span>✓</span><strong>${tasks.length}</strong><small>pendientes para hoy</small></button></section><div class="dashboard-grid"><section class="panel"><div class="section-heading"><div><p class="eyebrow">LO IMPORTANTE PRIMERO</p><h2>Un vistazo a casa</h2></div>${button("Ver todo →", "navigate", 'data-page="compras"', "text-button")}</div>${
+    [...urgent, ...low]
+      .slice(0, 4)
+      .map((e) => shoppingRow(e, true))
+      .join("") ||
+    empty("Todo está en orden", "No tienes compras pendientes. Qué gusto.")
+  }</section><section class="panel meal-feature"><div class="section-heading"><div><p class="eyebrow">A LA MESA</p><h2>Una idea para hoy</h2></div><span>♨</span></div>${todayMeal ? recipeCard(todayMeal) : empty("Tu recetario está listo", "Busca un ingrediente en Cocina.")}</section></div><section class="home-bottom"><div><p class="eyebrow">UN POCO DE CALMA</p><h2>Tu semana también merece espacio.</h2><p class="muted">Organiza desayuno, comida, cena y los pendientes que importan.</p></div>${button("Abrir mi agenda →", "navigate", 'data-page="agenda"')}</section>`;
+}
+function productCard(p) {
+  return `<article class="product-card"><button class="product-image" data-action="edit-product" ${idAttr(p.id)}><img src="${esc(photo(p.photo, p))}" alt="${esc(p.name)}" loading="lazy"><span class="badge ${status(p)}">${status(p) === "urgent" ? "Se terminó" : status(p) === "low" ? "Queda poco" : "En casa"}</span></button><div class="product-copy"><span class="eyebrow">${esc(categoryMeta[p.category]?.label || "Otros")}</span><h3>${esc(p.name)}</h3><p class="muted clamp">${esc(p.description || "Un básico de tu hogar")}</p><div class="price-line"><strong>${money(p.usualPrice)}</strong><span>${esc(content(p))}</span></div><div class="stock-control">${button("−", "consume", `${idAttr(p.id)} aria-label="Consumir una unidad de ${esc(p.name)}"`, "small-circle")}<span><b>${p.stock}</b> en casa</span>${button("+", "restock", `${idAttr(p.id)} aria-label="Añadir una unidad de ${esc(p.name)}"`, "small-circle")}</div><div class="card-actions">${button("Editar", "edit-product", idAttr(p.id), "text-button")}${p.category === "comida" ? button("Cocinar ↗", "food-recipes", idAttr(p.id), "text-button") : ""}${button("Eliminar", "delete-product", idAttr(p.id), "text-button danger-text")}</div></div></article>`;
+}
+function inventory() {
+  const products = data.products.filter(
+    (p) =>
+      (ui.category === "todos" || ui.category === p.category) &&
+      norm(p.name + " " + p.description).includes(norm(ui.query)),
+  );
+  return `<div class="page-toolbar"><div><p class="eyebrow">TU INVENTARIO</p><h2>Todo en su lugar <span class="count">${data.products.length}</span></h2></div>${button("+ Añadir producto", "new-product")}</div><form id="inventory-search" class="search-box"><span>⌕</span><input name="query" aria-label="Buscar en despensa" placeholder="Buscar en tu despensa…" value="${esc(ui.query)}"><button>Buscar</button></form><div class="chips" aria-label="Categorías">${[["todos", { label: "Todo", emoji: "✦" }], ...Object.entries(categoryMeta)].map(([key, value]) => button(value.emoji + " " + value.label, "category", `data-category="${key}" aria-pressed="${ui.category === key}"`, "chip" + (ui.category === key ? " selected" : ""))).join("")}</div><div class="product-grid">${products.map(productCard).join("") || empty("Espacio para lo que necesitas", "Añade un producto o prueba otra búsqueda.")}</div>`;
+}
+function shoppingRow(e, compact = false) {
+  const p = productById(e.productId);
+  return `<article class="shopping-row ${e.kind === "urgent" ? "urgent-row" : ""}"><img src="${esc(photo(e.image, e))}" alt="" loading="lazy"><div class="shopping-copy"><span class="eyebrow">${e.kind === "urgent" ? "COMPRA URGENTE" : "POR COMPRAR"}</span><h3>${esc(e.name)}</h3><p>${esc(e.detail || "Añadido a tu lista")}${e.price ? " · " + money(e.price) : ""}</p></div><div class="shopping-actions">${compact ? button("→", "navigate", 'data-page="compras" aria-label="Ver compras"', "small-circle") : button("✓", "buy-shopping", `${idAttr(e.id)} data-product="${p ? "yes" : ""}" aria-label="Marcar comprado: ${esc(e.name)}"`, "small-circle")}${!compact ? button("Editar", p ? "edit-product" : "edit-shopping", idAttr(e.id), "text-button") : ""}${!compact ? button("Eliminar", p ? "delete-product" : "delete-shopping", idAttr(e.id), "text-button danger-text") : ""}</div></article>`;
+}
+function purchases() {
+  return `<div class="page-toolbar"><div><p class="eyebrow">UNA LISTA QUE TE CUIDA</p><h2>Lo que falta en casa</h2></div>${button("+ Añadir a compras", "new-shopping")}</div><div class="shopping-layout"><div><section class="panel"><div class="section-heading"><h2><span class="red-dot"></span> Compra urgente</h2><span class="count">${shopping("urgent").length}</span></div>${
+    shopping("urgent")
+      .map((e) => shoppingRow(e))
+      .join("") || empty("Sin urgencias", "Ningún producto se ha terminado.")
+  }</section><section class="panel"><div class="section-heading"><h2>Para la próxima compra</h2><span class="count">${shopping("low").length}</span></div>${
+    shopping("low")
+      .map((e) => shoppingRow(e))
+      .join("") ||
+    empty(
+      "Tu lista está al día",
+      "Aquí aparecerán los productos que estén por terminarse.",
+    )
+  }</section></div><aside class="panel price-panel"><p class="eyebrow">TU SEMÁFORO DE PRECIOS</p><h2>¿Vale la pena?</h2><p class="muted">Compara el precio por el mismo contenido, aunque cambie el tamaño del empaque.</p>${data.products.length ? priceForm() : empty("Primero un producto", "Guarda su precio habitual en Despensa.")}<details><summary>Conoce tus márgenes</summary><table><thead><tr><th>Precio habitual</th><th>Oferta</th><th>No comprar</th></tr></thead><tbody>${PRICE_TIERS.map((t) => `<tr><td>${esc(t.label)}</td><td>−${t.discountPercent}%</td><td>+${t.increasePercent}%</td></tr>`).join("")}</tbody></table><p class="fine">Entre $1,000 y $2,000 se usa también el margen conservador de 1%. En el límite superior, la señal es roja.</p></details></aside></div>`;
+}
+function units(selected) {
+  return ["g", "kg", "ml", "L", "piezas", "rollos", "paquetes"]
+    .map(
+      (unit) =>
+        `<option ${selected === unit ? "selected" : ""}>${unit}</option>`,
+    )
+    .join("");
+}
+function priceForm() {
+  const p = productById(ui.price?.productId) || data.products[0],
+    r = ui.price?.result;
+  return `<form id="price-form" class="form-stack"><label>Producto<select name="productId" id="compare-product">${data.products.map((item) => `<option value="${esc(item.id)}" ${p.id === item.id ? "selected" : ""}>${esc(item.name)} · ${money(item.usualPrice)}</option>`).join("")}</select></label><label>Precio que encontraste ($)<input name="price" type="number" min="0" step="0.01" required value="${ui.price?.price ?? ""}" placeholder="0.00"></label><div class="form-grid"><label>Contenido nuevo<input name="contentValue" type="number" min="0.001" step="any" required value="${esc(ui.price?.contentValue ?? p.contentValue)}"></label><label>Unidad<select name="contentUnit">${units(ui.price?.contentUnit || p.contentUnit)}</select></label></div><button class="button">Comparar precio</button></form>${r ? `<div class="price-result ${r.decision}" role="status"><span>${r.decision === "avoid" ? "✕" : r.decision === "deal" ? "♡" : "✓"}</span><h3>${r.decision === "deal" ? "¡Por favor, cómpralo!" : esc(r.label)}</h3><p>${esc(r.message)}</p>${r.comparablePrice != null ? `<small>Equivale a ${money(r.comparablePrice)} por ${esc(content(p))}.</small>` : ""}${["deal", "approved", "avoid"].includes(r.decision) ? button("Registrar compra", "register-purchase", "", "button secondary") : ""}</div>` : ""}`;
+}
+function recipeCard(r) {
+  const missing = missingIngredients(r, data.products),
+    available = r.ingredients.length - missing.length;
+  return `<article class="recipe-card"><button class="recipe-photo" data-action="recipe" ${idAttr(r.id)}><img src="${esc(photo(r.image, r))}" alt="${esc(r.title)}" loading="lazy"><span class="recipe-tag">${esc(r.tag || r.category || "Hecha en casa")}</span></button><div class="recipe-copy"><div class="recipe-meta"><span>◷ ${esc(r.minutes || (/min/.test(String(r.time)) ? r.time : r.time + " min"))}</span><span>♧ ${r.servings} porciones</span></div><h3>${esc(r.title)}</h3><p class="muted clamp">${esc(r.description || "Ingredientes y paso a paso detallado para cocinar en casa.")}</p><div class="coverage"><span style="width:${(Math.max(0, available) / Math.max(1, r.ingredients.length)) * 100}%"></span></div><div class="recipe-footer"><small>${missing.length ? `${available}/${r.ingredients.length} ingredientes disponibles` : "Todo listo para cocinar"}</small>${button("Ver receta →", "recipe", idAttr(r.id), "text-button")}</div></div></article>`;
+}
+function kitchen() {
+  if (ui.catalogLoading)
+    return `<section class="kitchen-intro"><div><p class="eyebrow">COCINA SIN COMPLICARTE</p><h2>Preparando tu<br>recetario local.</h2><p>Cargamos sólo el índice de recetas; los pasos completos se abren cuando los necesitas.</p></div><img src="${BASE}photos/pasta.jpg" alt="Un plato de pasta preparado en casa"></section><section class="panel"><p class="muted">Organizando ideas para cocinar…</p></section>`;
+  let recipes =
+    ui.kitchenTab === "favoritas"
+      ? [
+          ...new Map(
+            [
+              ...data.recipes,
+              ...data.favorites.map(recipeById).filter(Boolean),
+            ].map((r) => [r.id, r]),
+          ).values(),
+        ].filter(
+          (r) =>
+            isRecipeAllowed(r) && norm(r.title).includes(norm(ui.recipeQuery)),
+        )
+      : recommendLocalRecipes({
+          query: ui.recipeQuery,
+          pantry: data.products,
+          limit: ui.recipeLimit,
+        });
+  return `<section class="kitchen-intro"><div><p class="eyebrow">COCINA SIN COMPLICARTE</p><h2>Una buena comida<br>empieza con lo que tienes.</h2><p>${catalog.length.toLocaleString("es-MX")} recetas detalladas para descubrir, guardar y cocinar a tu ritmo.</p></div><img src="${BASE}photos/pasta.jpg" alt="Un plato de pasta preparado en casa"></section><div class="page-toolbar"><div class="tabs">${[
+    ["recetas", "Descubrir"],
+    ["favoritas", "Mis recetas"],
+    ["menu", "Menú semanal"],
+  ]
+    .map(([key, label]) =>
+      button(
+        label,
+        "kitchen-tab",
+        `data-tab="${key}"`,
+        "tab" + (ui.kitchenTab === key ? " active" : ""),
+      ),
+    )
+    .join(
+      "",
+    )}</div>${button("+ Mi receta", "new-recipe", "", "button secondary")}</div>${ui.kitchenTab === "menu" ? mealPlanner() : `<form id="recipe-search" class="search-box"><span>⌕</span><input name="query" placeholder="¿Qué tienes? Pasta, avena, atún…" aria-label="Ingrediente o receta" value="${esc(ui.recipeQuery)}"><button>Recomendar</button></form><div class="recipe-grid">${recipes.map(recipeCard).join("") || empty("No encontramos una receta", "Prueba con un ingrediente más sencillo o agrega una receta propia.")}</div>${ui.kitchenTab === "recetas" && ui.recipeLimit < 200 && recipes.length >= ui.recipeLimit ? `<div class="center">${button("Más ideas para cocinar ↓", "more-recipes", "", "button secondary")}</div>` : ""}`}`;
+}
+function weekControl(anchor, scope) {
+  return `<div class="week-control">${button("←", "week-prev", `data-scope="${scope}" aria-label="Semana anterior"`, "circle")}<strong>${esc(dateLabel(weekDates(anchor)[0], { day: "numeric", month: "short" }))} — ${esc(dateLabel(weekDates(anchor)[6], { day: "numeric", month: "short" }))}</strong>${button("→", "week-next", `data-scope="${scope}" aria-label="Semana siguiente"`, "circle")}${button("Hoy", "week-today", `data-scope="${scope}"`, "text-button")}</div>`;
+}
+function mealPlanner() {
+  return `<section class="panel"><h2>Tu mesa, toda la semana</h2><p class="muted">Elige cada comida. Los ingredientes que falten pueden ir a tu lista.</p>${weekControl(ui.week, "kitchen")}<div class="week-grid">${weekDates(
+    ui.week,
+  )
+    .map(
+      (date) =>
+        `<article class="day-card ${date === localDate() ? "today" : ""}"><h3>${esc(dateLabel(date, { weekday: "short", day: "numeric" }))}</h3>${meals
+          .map((meal) => {
+            const r = recipeById(data.mealPlans[date]?.[meal]);
+            return `<div class="meal-slot"><span class="eyebrow">${meal}</span>${r ? `<button class="meal-name" data-action="recipe" ${idAttr(r.id)}>${esc(r.title)}</button>` : '<p class="muted">Un espacio para algo rico</p>'}${button(r ? "Cambiar" : "＋ Elegir", "plan-slot", `data-date="${date}" data-meal="${meal}"`, "text-button")}</div>`;
+          })
+          .join("")}</article>`,
+    )
+    .join("")}</div></section>`;
+}
+function taskRow(t) {
+  return `<article class="task-row ${t.completed ? "completed" : ""}"><input type="checkbox" data-task="${esc(t.id)}" ${t.completed ? "checked" : ""} aria-label="Completar ${esc(t.title)}"><div><h3>${esc(t.title)}</h3><p>${esc(t.time)} · ${esc(dateLabel(t.date, { day: "numeric", month: "short" }))}${t.priority === "alta" ? " · Prioridad alta" : ""}</p>${t.notes ? `<small>${esc(t.notes)}</small>` : ""}</div>${button("Editar", "edit-task", idAttr(t.id), "text-button")}<a class="calendar-link" href="${esc(calendarUrl(t))}" target="_blank" rel="noopener noreferrer" aria-label="Añadir ${esc(t.title)} a Google Calendar">G ↗</a></article>`;
+}
+function agenda() {
+  const dates = weekDates(ui.agendaDate),
+    filtered = data.tasks
+      .filter((t) => t.date === ui.agendaDate)
+      .sort(
+        (a, b) =>
+          Number(a.completed) - Number(b.completed) ||
+          a.time.localeCompare(b.time),
+      ),
+    overdue = data.tasks.filter((t) => !t.completed && t.date < localDate());
+  return `<div class="page-toolbar"><div><p class="eyebrow">PASO A PASO</p><h2>Lo importante tiene su momento.</h2></div>${button("+ Nuevo pendiente", "new-task")}</div><section class="panel">${weekControl(ui.agendaDate, "agenda")}<div class="agenda-week">${dates.map((date) => button(`<span>${esc(dateLabel(date, { weekday: "short" }))}</span><strong>${new Date(date + "T12:00").getDate()}</strong><small>${data.tasks.filter((t) => t.date === date && !t.completed).length} pendientes</small>`, "select-date", `data-date="${date}"`, "agenda-day" + (date === ui.agendaDate ? " selected" : "") + (date === localDate() ? " is-today" : ""))).join("")}</div><div class="section-heading selected-day"><h2>${esc(dateLabel(ui.agendaDate))}</h2><label class="date-picker">Ir a fecha<input id="agenda-date" type="date" value="${ui.agendaDate}" aria-label="Fecha de agenda"></label></div>${filtered.map(taskRow).join("") || empty("Un día con espacio", "Añade un pendiente o disfruta este momento de calma.")}</section>${overdue.length ? `<section class="panel"><h2>Para retomar <span class="count">${overdue.length}</span></h2>${overdue.slice(0, 20).map(taskRow).join("")}</section>` : ""}<section class="calendar-note"><span>▦</span><div><h3>Tu agenda, también en Google Calendar</h3><p>El botón G ↗ abre un evento listo para guardar. Tú confirmas en Google; no hay sincronización automática ni acceso a tu calendario.</p></div>${button("Exportar semana (.ics)", "export-calendar", "", "button secondary")}</section>`;
+}
+function settings() {
+  return `<div class="settings-grid"><section class="panel"><p class="eyebrow">TU RINCÓN</p><h2>Se siente como tú</h2><form id="settings-form" class="form-stack"><label>¿Cómo te llamamos?<input name="displayName" maxlength="80" value="${esc(data.settings.displayName)}"></label><label>Apariencia<select name="theme">${[
+    ["system", "Igual que mi dispositivo"],
+    ["light", "Claro · Hogar luminoso"],
+    ["dark", "Oscuro · Noche tranquila"],
+  ]
+    .map(
+      ([value, label]) =>
+        `<option value="${value}" ${data.settings.theme === value ? "selected" : ""}>${label}</option>`,
+    )
+    .join(
+      "",
+    )}</select></label><button class="button">Guardar preferencias</button></form></section><section class="panel"><p class="eyebrow">A TIEMPO</p><h2>Notificaciones y pantalla de inicio</h2><p class="muted">Recibe avisos de productos y pendientes mientras la web está abierta. Para notificaciones con la app cerrada y widgets reales de Android, instala el APK.</p><div class="settings-actions">${button(data.settings.notifications ? "Enviar aviso de prueba" : "Activar notificaciones", "enable-notifications")}${data.settings.notifications ? button("Desactivar avisos", "disable-notifications", "", "text-button") : ""}${button("Instalar versión web", "install", "", "button secondary")}<a class="button secondary" href="https://github.com/JosephT2244/Foraneo/releases/latest" target="_blank" rel="noopener noreferrer">Descargar app Android / Windows ↗</a></div><p class="fine">La instalación web añade un icono; no crea widgets nativos. En iPhone/iPad: Compartir → Añadir a pantalla de inicio.</p></section><section class="panel"><p class="eyebrow">PRIVACIDAD LOCAL</p><h2>${auth.hasAccount ? "Tu perfil está protegido" : "Tu hogar, con contraseña"}</h2><p class="muted">${auth.hasAccount ? `Sesión de ${esc(auth.username)}. Tus datos se guardan cifrados en este navegador.` : "Crea un usuario local y una contraseña para cifrar tus datos en este navegador. No se crea una cuenta en internet."}</p><div class="settings-actions">${button(auth.hasAccount ? "Cambiar contraseña" : "Crear perfil local", "create-profile")}${auth.hasAccount ? button("Cerrar sesión", "lock", "", "button secondary") : ""}</div><p class="fine">No hay recuperación por correo ni sincronización entre dispositivos. Conserva tu contraseña y un respaldo. Cada navegador y app guarda su propio perfil.</p></section><section class="panel"><p class="eyebrow">TODO BAJO TU CONTROL</p><h2>Respaldos y portabilidad</h2><p class="muted">Exporta tus productos, recetas y agenda. ${auth.hasAccount ? "El respaldo se cifra con tu contraseña." : "Sin perfil, el respaldo contiene tus datos sin cifrar: guárdalo en un lugar seguro."}</p><div class="settings-actions">${button("Exportar respaldo", "export-backup")}${button("Restaurar respaldo", "import-backup", "", "button secondary")}<input id="backup-file" type="file" accept=".json,application/json" hidden></div><p class="fine">Los respaldos web se importan en Foráneo web. No compartas archivos con información privada.</p></section></div><section class="about"><img src="${BASE}icon-192.png" alt="Logo de Foráneo"><h2>Foráneo</h2><p>Tu casa, contigo. Versión 2.0 · Recetario sin API</p><small>by Joseph Ubaldo Trejo Hernandez</small></section>`;
+}
 
-function photoEditor(value,item){return `<div class="photo-editor"><img id="photo-preview" src="${esc(photo(value,item))}" alt="Vista previa de la fotografía"><div><strong>Una foto lo hace tuyo</strong><p class="fine">Se guarda en este dispositivo. JPG, PNG o WebP; máximo 15 MB.</p><div class="photo-actions">${button('Elegir foto','pick-photo','','button secondary')}${button('Tomar foto','take-photo','','button secondary')}${button('Quitar','remove-photo','','text-button')}</div></div></div><input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp" hidden><input id="camera-file" type="file" accept="image/*" capture="environment" hidden><div id="camera-panel" hidden><video id="camera-preview" autoplay playsinline muted></video><div class="photo-actions">${button('Capturar foto','capture-photo')}${button('Cerrar cámara','stop-camera','','button secondary')}</div></div>`;}
-function productEditor(p={}){return `<form id="product-form" class="form-stack"><input type="hidden" name="id" value="${esc(p.id)}">${photoEditor(p.photo,p)}<label>Nombre del producto<input name="name" required maxlength="150" value="${esc(p.name)}" placeholder="Por ejemplo: Pasta fusilli"></label><label>Descripción<textarea name="description" maxlength="2000" rows="2" placeholder="Marca, características o detalles…">${esc(p.description)}</textarea></label><div class="form-grid"><label>Categoría<select name="category">${Object.entries(categoryMeta).map(([key,v])=>`<option value="${key}" ${p.category===key?'selected':''}>${v.label}</option>`).join('')}</select></label><label>Precio habitual ($)<input name="usualPrice" required type="number" min="0.01" max="10000000" step="0.01" value="${p.usualPrice??''}" placeholder="20.00"></label><label>Contenido del empaque<input name="contentValue" required type="number" min="0.001" max="1000000" step="any" value="${p.contentValue??1}"></label><label>Unidad<select name="contentUnit">${units(p.contentUnit||'piezas')}</select></label><label>Empaques que tienes<input name="stock" required type="number" min="0" max="1000000" step="any" value="${p.stock??1}"></label><label>Avisar cuando queden<input name="lowAt" required type="number" min="0" max="1000000" step="any" value="${p.lowAt??1}"></label></div><p class="fine">Puedes escribir 0.5 si queda medio empaque. Al llegar a cero pasa a compra urgente.</p><p class="form-error" role="alert"></p><button class="button">${p.id?'Guardar cambios':'Añadir a mi despensa'}</button></form>`;}
-function shoppingEditor(e={}){return `<form id="shopping-form" class="form-stack"><input name="id" type="hidden" value="${esc(e.id)}">${photoEditor(e.image,e)}<label>Producto<input name="name" required maxlength="180" value="${esc(e.name)}" placeholder="¿Qué hace falta?"></label><label>Cantidad y detalles<textarea name="detail" rows="2" maxlength="2000" placeholder="Por ejemplo: 2 piezas, sin azúcar">${esc(e.detail)}</textarea></label><div class="form-grid"><label>Prioridad<select name="kind"><option value="low" ${e.kind!=='urgent'?'selected':''}>Próxima compra</option><option value="urgent" ${e.kind==='urgent'?'selected':''}>Urgente · Ya se terminó</option></select></label><label>Precio estimado ($)<input name="price" type="number" min="0" max="10000000" step="0.01" value="${e.price??0}"></label></div><p class="form-error" role="alert"></p><button class="button">${e.id?'Guardar cambios':'Añadir a compras'}</button></form>`;}
-function taskEditor(t={}){return `<form id="task-form" class="form-stack"><input name="id" type="hidden" value="${esc(t.id)}"><label>Pendiente<input name="title" maxlength="200" required value="${esc(t.title)}" placeholder="Algo que quieras recordar"></label><label>Notas<textarea name="notes" maxlength="2000" rows="3">${esc(t.notes)}</textarea></label><div class="form-grid"><label>Fecha<input name="date" type="date" required value="${esc(t.date||ui.agendaDate)}"></label><label>Hora<input name="time" type="time" required value="${esc(t.time||'09:00')}"></label></div><label>Prioridad<select name="priority">${['baja','media','alta'].map(v=>`<option value="${v}" ${(t.priority||'media')===v?'selected':''}>${v}</option>`).join('')}</select></label><p class="fine">Los recordatorios web se revisan mientras Foráneo está abierto. Para horarios en segundo plano, usa la app Android.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="button">Guardar pendiente</button>${t.id?button('Eliminar','delete-task',idAttr(t.id),'text-button danger-text'):''}</div></form>`;}
-function recipeEditor(r={}){return `<form id="recipe-form" class="form-stack"><input name="id" type="hidden" value="${esc(r.id)}">${photoEditor(r.image,r)}<label>Nombre de la receta<input name="title" required maxlength="180" value="${esc(r.title)}" placeholder="Tu receta de casa"></label><label>Descripción<textarea name="description" maxlength="2000" rows="2">${esc(r.description)}</textarea></label><div class="form-grid"><label>Tiempo total<input name="time" maxlength="40" required value="${esc(r.time)}" placeholder="30 min"></label><label>Porciones<input name="servings" type="number" min="1" max="100" required value="${r.servings||2}"></label></div><label>Ingredientes, uno por línea<textarea name="ingredients" rows="6" required placeholder="250 g de pasta sin huevo&#10;200 g de tomate&#10;15 ml de aceite de oliva">${esc(r.ingredients?.join('\n'))}</textarea></label><label>Preparación, un paso completo por línea<textarea name="steps" rows="8" required placeholder="Describe cantidades, tiempos y señales de cocción en cada paso…">${esc(r.steps?.join('\n'))}</textarea></label><label>Tipo de cocina<input name="cuisine" maxlength="80" value="${esc(r.cuisine)}" placeholder="Mexicana, china, mediterránea…"></label><label>Video en YouTube (opcional)<input name="videoUrl" type="url" value="${esc(r.videoUrl)}" placeholder="https://www.youtube.com/watch?v=…"></label><p class="fine">Comprobamos tus preferencias: sin huevo revuelto ni similares; arroz solo en preparaciones asiáticas.</p><p class="form-error" role="alert"></p><button class="button">Guardar mi receta</button></form>`;}
-function recipeDetail(r){if(!r)return empty('Receta no disponible','Vuelve al recetario y elige otra idea.');const missing=missingIngredients(r,data.products),custom=data.recipes.some(v=>v.id===r.id);return `<div class="recipe-detail"><img class="detail-photo" src="${esc(photo(r.image,r))}" alt="${esc(r.title)}"><p class="fine">${esc(r.imageCaption||'Fotografía ilustrativa.')}</p><div class="detail-meta"><span>◷ ${esc(r.minutes||r.time)}</span><span>♧ ${r.servings} porciones</span><span>${esc(r.difficulty||'Receta de casa')}</span></div><p>${esc(r.description)}</p><div class="dialog-actions">${button(data.favorites.includes(r.id)?'♥ Guardada':'♡ Guardar receta','favorite',idAttr(r.id),'button secondary')}${button('＋ Planear comida','plan-recipe',idAttr(r.id),'button secondary')}${custom?button('Editar','edit-recipe',idAttr(r.id),'text-button'):''}${custom?button('Eliminar','delete-recipe',idAttr(r.id),'text-button danger-text'):''}</div>${r.equipment?.length?`<div class="recipe-info"><strong>Antes de empezar</strong><p>${esc(r.equipment.join(' · '))}</p></div>`:''}${r.allergens?.length?`<p class="allergen-note">Alérgenos indicados: ${esc(r.allergens.join(', '))}. Comprueba etiquetas y posibles trazas.</p>`:''}<div class="detail-columns"><section><div class="section-heading"><h3>Todos los ingredientes</h3><span class="count">${r.ingredients.length}</span></div><ul class="ingredient-list">${r.ingredients.map(i=>`<li class="${missing.includes(i)?'missing':''}"><span>${missing.includes(i)?'○':'✓'}</span>${esc(i)}</li>`).join('')}</ul><p class="fine">✓ Coincide con un producto disponible. Confirma que la cantidad sea suficiente.</p>${missing.length?button(`Añadir ${missing.length} faltantes a compras`,'missing-ingredients',idAttr(r.id)):'<p class="success-note">Tienes los ingredientes. ¡A cocinar!</p>'}</section><section><h3>Preparación, paso a paso</h3><ol class="recipe-steps">${r.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></section></div>${r.notes?.length?`<section class="recipe-info"><h3>Consejos para que salga bien</h3><ul>${r.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></section>`:''}<div class="video-note"><div><strong>¿Prefieres una guía en video?</strong><p class="fine">La búsqueda abre YouTube; los resultados son externos y pueden usar ingredientes diferentes.</p></div><a class="button secondary" href="${esc(r.videoUrl||'https://www.youtube.com/results?search_query='+encodeURIComponent(r.title))}" target="_blank" rel="noopener noreferrer">${r.videoUrl&&!r.videoUrl.includes('/results?')?'Abrir video':'Buscar en YouTube'} ↗</a></div><p class="fine">${esc(r.source||'Receta guardada en tu recetario personal.')}</p></div>`;}
-function profileForm(){return `<form id="profile-form" class="form-stack"><p>Crea un perfil local cifrado. Tu contraseña nunca sale del dispositivo; no hay recuperación por correo.</p><label>Usuario<input name="username" required maxlength="80" autocomplete="username" value="${esc(auth.username||data.settings.displayName)}"></label>${auth.hasAccount?'<label>Contraseña actual<input name="currentPassword" type="password" autocomplete="current-password" required></label>':''}<label>${auth.hasAccount?'Nueva contraseña':'Contraseña'}<input name="password" type="password" required minlength="10" autocomplete="new-password"></label><label>Repetir contraseña<input name="confirm" type="password" required minlength="10" autocomplete="new-password"></label><p class="fine">Al menos 10 caracteres. Guarda un respaldo y tu contraseña en un lugar seguro.</p><p class="form-error" role="alert"></p><button class="button">${auth.hasAccount?'Cambiar contraseña':'Crear perfil y cifrar mis datos'}</button></form>`;}
-function planChooser(){const selected=ui.modal.recipeId,query=ui.modal.query||'',choices=selected?[recipeById(selected)].filter(Boolean):[...data.recipes.filter(isRecipeAllowed).filter(r=>norm(r.title).includes(norm(query))),...recommendLocalRecipes({query,pantry:data.products,limit:30})];return `<form id="plan-form" class="form-stack"><div class="form-grid"><label>Fecha<input name="date" type="date" required value="${esc(ui.modal.date||localDate())}"></label><label>Comida<select name="meal">${meals.map(m=>`<option value="${m}" ${m===(ui.modal.meal||'comida')?'selected':''}>${m}</option>`).join('')}</select></label></div>${!selected?`<div class="search-box"><input id="plan-search" value="${esc(query)}" placeholder="Buscar una receta" aria-label="Buscar receta para el menú">${button('Buscar','plan-search','','text-button')}</div>`:''}<label>Receta<select name="recipeId" required><option value="">Elige tu receta</option>${choices.map(r=>`<option value="${esc(r.id)}" ${selected===r.id?'selected':''}>${esc(r.title)}</option>`).join('')}</select></label><p class="form-error" role="alert"></p><button class="button">Añadir a mi semana</button>${ui.modal.date&&ui.modal.meal?button('Dejar este espacio libre','clear-plan',`data-date="${esc(ui.modal.date)}" data-meal="${ui.modal.meal}"`,'text-button danger-text'):''}</form>`;}
-function modalContent(){const m=ui.modal;if(!m)return '';let title='',body='',wide=false;switch(m.type){case'product':{title=m.id?'Editar producto':'Un nuevo básico en casa';const purchase=entryById(m.fromShopping);body=productEditor(productById(m.id)||(purchase?{name:purchase.name,description:purchase.detail,usualPrice:purchase.price||undefined,photo:purchase.image,category:purchase.source==='receta'?'comida':'otros'}:undefined));break;}case'shopping':title=m.id?'Editar compra':'Algo para tu lista';body=shoppingEditor(entryById(m.id));break;case'task':title=m.id?'Editar pendiente':'Dale un espacio en tu día';body=taskEditor(data.tasks.find(t=>t.id===m.id));break;case'recipe':title=recipeById(m.id)?.title||'Receta';body=recipeDetail(recipeById(m.id));wide=true;break;case'recipe-editor':title=m.id?'Editar receta':'Tu receta, a tu manera';body=recipeEditor(data.recipes.find(r=>r.id===m.id));break;case'profile':title=auth.hasAccount?'Cuida tu perfil':'Un hogar con privacidad';body=profileForm();break;case'plan':title='Una buena comida en tu semana';body=planChooser();break;case'confirm':title=m.title;body=`<p>${esc(m.message)}</p><div class="dialog-actions">${button(m.label||'Confirmar','confirm-action','','button danger-button')}${button('Cancelar','close-modal','','button secondary')}</div>`;break;case'notifications':title='Un aviso a tiempo';body=`<div class="dialog-actions">${button('Marcar todos como leídos','read-notifications','','text-button')}</div>${data.notifications.map(n=>`<article class="notice ${n.read?'read':''}"><span>${n.id.startsWith('stock:')?'▱':'◷'}</span><div><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p><small>${esc(new Date(n.time).toLocaleString('es-MX'))}</small></div></article>`).join('')||empty('Por aquí todo tranquilo','Cuando algo necesite tu atención, lo verás aquí.')}`;break;case'restore':title='Restaurar tu respaldo';body=`<form id="restore-form" class="form-stack"><p>Este respaldo reemplazará los datos actuales de este navegador. Exporta primero tus datos si quieres conservarlos.</p>${m.vault?`<label>Usuario<input name="username" value="${esc(m.vault.username)}" autocomplete="username" required></label><label>Contraseña del respaldo<input name="password" type="password" required autocomplete="current-password"></label>`:`<p><strong>${m.value.products.length}</strong> productos · <strong>${m.value.recipes.length}</strong> recetas · <strong>${m.value.tasks.length}</strong> pendientes</p>`}<p class="form-error" role="alert"></p><button class="button">Restaurar y reemplazar datos</button>${button('Cancelar','close-modal','','button secondary')}</form>`;break;}return `<div class="modal-backdrop"><section class="dialog ${wide?'dialog-wide':''}" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="dialog-header"><h2 id="dialog-title">${esc(title)}</h2>${button('×','close-modal','aria-label="Cerrar ventana"','circle')}</div>${body}</section></div>`;}
-function lockScreen(){return `<main class="lock-page"><section class="lock-intro"><img src="${BASE}icon-512.png" alt="Logo de Foráneo"><p class="light-label">TU CASA, CONTIGO.</p><h1>Un pequeño espacio.<br>Toda tu vida en orden.</h1><p>Tu despensa, tus recetas y tus planes, solo para ti.</p></section><section class="lock-card"><p class="eyebrow">BIENVENIDO A CASA</p><h2>Qué bueno verte de nuevo.</h2><p class="muted">Abre tu perfil local para continuar.</p><form id="login-form" class="form-stack"><label>Usuario<input name="username" autocomplete="username" maxlength="80" required value="${esc(auth.username)}"></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><p class="form-error" role="alert"></p><button class="button">Entrar a mi hogar</button></form><p class="fine">Sin cuentas externas. Tus datos permanecen cifrados en este dispositivo. La contraseña no se puede recuperar.</p>${button('Restaurar un respaldo','import-backup','','text-button')}<input id="backup-file" type="file" accept=".json,application/json" hidden><small class="signature">by Joseph Ubaldo Trejo Hernandez</small></section></main>`;}
-function recoveryScreen(){return `<main class="recovery-page panel"><img src="${BASE}icon-192.png" alt="Foráneo"><h1>Vamos a cuidar tus datos.</h1><p>${esc(startupError)}</p><p>No guardaremos cambios encima del archivo original.</p><div class="settings-actions">${button('Descargar datos originales','export-recovery')}${button('Restaurar un respaldo','import-backup','','button secondary')}${button('Empezar de nuevo','reset-recovery','','text-button danger-text')}</div><input id="backup-file" type="file" accept=".json,application/json" hidden></main>`;}
-function render(){applyTheme();const pages={inicio:dashboard,despensa:inventory,compras:purchases,cocina:kitchen,agenda,ajustes:settings};app.innerHTML=recoveryRequired?recoveryScreen():isLocked()?lockScreen():`<div class="app-shell"><aside class="sidebar"><a class="brand" href="#inicio" data-action="navigate" data-page="inicio"><img src="${BASE}icon-192.png" alt="Logo de Foráneo"><span>Foráneo<small>tu casa, contigo.</small></span></a><p class="nav-label">MI HOGAR</p><nav class="side-nav" aria-label="Navegación principal">${navigation.map(([key,icon,label])=>button(`<span>${icon}</span>${label}`,'navigate',`data-page="${key}" ${ui.page===key?'aria-current="page"':''}`,'nav-item'+(ui.page===key?' active':''))).join('')}</nav><div class="sidebar-bottom"><div class="offline-label"><span></span> Tu hogar, contigo</div><p>Organiza, cocina y disfruta<br>a tu propio ritmo.</p>${button('⚙ Ajustes y mi perfil','navigate','data-page="ajustes"','nav-item'+(ui.page==='ajustes'?' active':''))}<small>by Joseph Ubaldo Trejo Hernandez</small></div></aside><div class="main-area"><div class="mobile-brand"><img src="${BASE}icon-192.png" alt=""><span>Foráneo</span><small>tu casa, contigo.</small></div><main id="main-content">${header()}${(pages[ui.page]||dashboard)()}</main><footer class="site-footer">Hecho para sentirte en casa. <span>Foráneo · 2.1</span></footer></div><nav class="bottom-nav" aria-label="Navegación móvil">${navigation.map(([key,icon,label])=>button(`<span>${icon}</span><small>${label}</small>`,'navigate',`data-page="${key}" ${ui.page===key?'aria-current="page"':''}`,'bottom-item'+(ui.page===key?' active':''))).join('')}</nav></div>`;app.insertAdjacentHTML('beforeend',modalContent()+(ui.toast?`<div class="toast ${ui.tone}" role="status">${esc(ui.toast)}${button('×','dismiss-toast','aria-label="Cerrar aviso"','text-button')}</div>`:''));document.body.classList.toggle('modal-open',Boolean(ui.modal));document.title=`Foráneo${ui.page==='inicio'?'':' · '+({ajustes:'Ajustes',despensa:'Despensa',compras:'Compras',cocina:'Cocina',agenda:'Agenda'}[ui.page]||'')}`;}
-function formError(form,error){const element=form.querySelector('.form-error');if(element){element.textContent=error.message||String(error);element.focus();}else notify(error.message||String(error),'danger');}
-function download(filename,contents,type='application/json'){const url=URL.createObjectURL(new Blob([contents],{type})),a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
-function confirmAction(title,message,callback,label){openModal('confirm',{title,message,callback,label});}
-function shiftWeek(scope,amount){const key=scope==='agenda'?'agendaDate':'week',date=new Date(ui[key]+'T12:00:00');date.setDate(date.getDate()+amount);ui[key]=localDate(date);render();}
-function addMissing(r){let count=0;for(const ingredient of missingIngredients(r,data.products)){if(data.shopping.some(e=>ingredientMatches(e.name,ingredient)))continue;const existing=data.products.find(p=>p.category==='comida'&&ingredientMatches(p.name,ingredient));if(existing&&status(existing)!=='stocked')continue;data.shopping.unshift({id:uuid(),name:ingredient,detail:'Para '+r.title,kind:'low',image:'',price:0,source:'receta'});count++;}commit(count?`${count} ingredientes añadidos a compras.`:'Los ingredientes faltantes ya están en tu lista.');}
-async function readImage(file){const modal=ui.modal;if(!file||!modal)return;if(file.size>15*1024*1024)throw new Error('La foto supera 15 MB. Elige una imagen más pequeña.');if(!file.type.startsWith('image/'))throw new Error('Selecciona un archivo de imagen.');const url=URL.createObjectURL(file);try{const image=await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('No se pudo abrir esa imagen. Prueba con JPG o PNG.'));img.src=url;});if(ui.modal!==modal||!$('#photo-preview'))return;const scale=Math.min(1,1000/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);imageDraft=canvas.toDataURL('image/jpeg',0.8);$('#photo-preview').src=imageDraft;ui.modal.photoChanged=true;}finally{URL.revokeObjectURL(url);}}
-async function takePhoto(){const modal=ui.modal;if(!modal)return;if(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)){return $('#camera-file')?.click();}if(!navigator.mediaDevices?.getUserMedia)return $('#camera-file')?.click();stopCamera();const request=cameraRequest;try{const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280}},audio:false});if(request!==cameraRequest||ui.modal!==modal||document.hidden){stream.getTracks().forEach(track=>track.stop());return;}cameraStream=stream;$('#camera-panel').hidden=false;$('#camera-preview').srcObject=cameraStream;await $('#camera-preview').play();}catch{if(request!==cameraRequest||ui.modal!==modal)return;stopCamera();const error=$('.dialog .form-error');if(error)error.textContent='No pudimos acceder a la cámara. Permite su uso en tu navegador o elige una foto.';}}
-async function enableNotifications(){if(!('Notification'in window)){notify('Este navegador no permite avisos del sistema. En iPhone instala la web en pantalla de inicio; también puedes usar la app Android.','danger');return;}const permission=await Notification.requestPermission();if(permission!=='granted'){notify('Los avisos no están permitidos. Puedes habilitarlos en los ajustes del navegador.','danger');return;}data.settings.notifications=true;await persist();await deviceNotification('Foráneo · Todo listo','Tus avisos están activados mientras la web está abierta.','foraneo-test');notify('Enviamos un aviso de prueba. Tu dispositivo decide cómo mostrarlo.');}
+function photoEditor(value, item) {
+  return `<div class="photo-editor"><img id="photo-preview" src="${esc(photo(value, item))}" alt="Vista previa de la fotografía"><div><strong>Una foto lo hace tuyo</strong><p class="fine">Se guarda en este dispositivo. JPG, PNG o WebP; máximo 15 MB.</p><div class="photo-actions">${button("Elegir foto", "pick-photo", "", "button secondary")}${button("Tomar foto", "take-photo", "", "button secondary")}${button("Quitar", "remove-photo", "", "text-button")}</div></div></div><input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp" hidden><input id="camera-file" type="file" accept="image/*" capture="environment" hidden><div id="camera-panel" hidden><video id="camera-preview" autoplay playsinline muted></video><div class="photo-actions">${button("Capturar foto", "capture-photo")}${button("Cerrar cámara", "stop-camera", "", "button secondary")}</div></div>`;
+}
+function productEditor(p = {}) {
+  return `<form id="product-form" class="form-stack"><input type="hidden" name="id" value="${esc(p.id)}">${photoEditor(p.photo, p)}<label>Nombre del producto<input name="name" required maxlength="150" value="${esc(p.name)}" placeholder="Por ejemplo: Pasta fusilli"></label><label>Descripción<textarea name="description" maxlength="2000" rows="2" placeholder="Marca, características o detalles…">${esc(p.description)}</textarea></label><div class="form-grid"><label>Categoría<select name="category">${Object.entries(
+    categoryMeta,
+  )
+    .map(
+      ([key, v]) =>
+        `<option value="${key}" ${p.category === key ? "selected" : ""}>${v.label}</option>`,
+    )
+    .join(
+      "",
+    )}</select></label><label>Precio habitual ($)<input name="usualPrice" required type="number" min="0.01" max="10000000" step="0.01" value="${p.usualPrice ?? ""}" placeholder="20.00"></label><label>Contenido del empaque<input name="contentValue" required type="number" min="0.001" max="1000000" step="any" value="${p.contentValue ?? 1}"></label><label>Unidad<select name="contentUnit">${units(p.contentUnit || "piezas")}</select></label><label>Empaques que tienes<input name="stock" required type="number" min="0" max="1000000" step="any" value="${p.stock ?? 1}"></label><label>Avisar cuando queden<input name="lowAt" required type="number" min="0" max="1000000" step="any" value="${p.lowAt ?? 1}"></label></div><p class="fine">Puedes escribir 0.5 si queda medio empaque. Al llegar a cero pasa a compra urgente.</p><p class="form-error" role="alert"></p><button class="button">${p.id ? "Guardar cambios" : "Añadir a mi despensa"}</button></form>`;
+}
+function shoppingEditor(e = {}) {
+  return `<form id="shopping-form" class="form-stack"><input name="id" type="hidden" value="${esc(e.id)}">${photoEditor(e.image, e)}<label>Producto<input name="name" required maxlength="180" value="${esc(e.name)}" placeholder="¿Qué hace falta?"></label><label>Cantidad y detalles<textarea name="detail" rows="2" maxlength="2000" placeholder="Por ejemplo: 2 piezas, sin azúcar">${esc(e.detail)}</textarea></label><div class="form-grid"><label>Prioridad<select name="kind"><option value="low" ${e.kind !== "urgent" ? "selected" : ""}>Próxima compra</option><option value="urgent" ${e.kind === "urgent" ? "selected" : ""}>Urgente · Ya se terminó</option></select></label><label>Precio estimado ($)<input name="price" type="number" min="0" max="10000000" step="0.01" value="${e.price ?? 0}"></label></div><p class="form-error" role="alert"></p><button class="button">${e.id ? "Guardar cambios" : "Añadir a compras"}</button></form>`;
+}
+function taskEditor(t = {}) {
+  return `<form id="task-form" class="form-stack"><input name="id" type="hidden" value="${esc(t.id)}"><label>Pendiente<input name="title" maxlength="200" required value="${esc(t.title)}" placeholder="Algo que quieras recordar"></label><label>Notas<textarea name="notes" maxlength="2000" rows="3">${esc(t.notes)}</textarea></label><div class="form-grid"><label>Fecha<input name="date" type="date" required value="${esc(t.date || ui.agendaDate)}"></label><label>Hora<input name="time" type="time" required value="${esc(t.time || "09:00")}"></label></div><label>Prioridad<select name="priority">${["baja", "media", "alta"].map((v) => `<option value="${v}" ${(t.priority || "media") === v ? "selected" : ""}>${v}</option>`).join("")}</select></label><p class="fine">Los recordatorios web se revisan mientras Foráneo está abierto. Para horarios en segundo plano, usa la app Android.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="button">Guardar pendiente</button>${t.id ? button("Eliminar", "delete-task", idAttr(t.id), "text-button danger-text") : ""}</div></form>`;
+}
+function recipeEditor(r = {}) {
+  return `<form id="recipe-form" class="form-stack"><input name="id" type="hidden" value="${esc(r.id)}">${photoEditor(r.image, r)}<label>Nombre de la receta<input name="title" required maxlength="180" value="${esc(r.title)}" placeholder="Tu receta de casa"></label><label>Descripción<textarea name="description" maxlength="2000" rows="2">${esc(r.description)}</textarea></label><div class="form-grid"><label>Tiempo total<input name="time" maxlength="40" required value="${esc(r.time)}" placeholder="30 min"></label><label>Porciones<input name="servings" type="number" min="1" max="100" required value="${r.servings || 2}"></label></div><label>Ingredientes, uno por línea<textarea name="ingredients" rows="6" required placeholder="250 g de pasta sin huevo&#10;200 g de tomate&#10;15 ml de aceite de oliva">${esc(r.ingredients?.join("\n"))}</textarea></label><label>Preparación, un paso completo por línea<textarea name="steps" rows="8" required placeholder="Describe cantidades, tiempos y señales de cocción en cada paso…">${esc(r.steps?.join("\n"))}</textarea></label><label>Tipo de cocina<input name="cuisine" maxlength="80" value="${esc(r.cuisine)}" placeholder="Mexicana, china, mediterránea…"></label><label>Video en YouTube (opcional)<input name="videoUrl" type="url" value="${esc(r.videoUrl)}" placeholder="https://www.youtube.com/watch?v=…"></label><p class="fine">Comprobamos tus preferencias: sin huevo revuelto ni similares; arroz solo en preparaciones asiáticas.</p><p class="form-error" role="alert"></p><button class="button">Guardar mi receta</button></form>`;
+}
+function recipeDetail(r) {
+  if (!r)
+    return empty(
+      "Receta no disponible",
+      "Vuelve al recetario y elige otra idea.",
+    );
+  const missing = missingIngredients(r, data.products),
+    custom = data.recipes.some((v) => v.id === r.id);
+  return `<div class="recipe-detail"><img class="detail-photo" src="${esc(photo(r.image, r))}" alt="${esc(r.title)}"><p class="fine">${esc(r.imageCaption || "Fotografía ilustrativa.")}</p><div class="detail-meta"><span>◷ ${esc(r.minutes || r.time)}</span><span>♧ ${r.servings} porciones</span><span>${esc(r.difficulty || "Receta de casa")}</span></div><p>${esc(r.description)}</p><div class="dialog-actions">${button(data.favorites.includes(r.id) ? "♥ Guardada" : "♡ Guardar receta", "favorite", idAttr(r.id), "button secondary")}${button("＋ Planear comida", "plan-recipe", idAttr(r.id), "button secondary")}${custom ? button("Editar", "edit-recipe", idAttr(r.id), "text-button") : ""}${custom ? button("Eliminar", "delete-recipe", idAttr(r.id), "text-button danger-text") : ""}</div>${r.equipment?.length ? `<div class="recipe-info"><strong>Antes de empezar</strong><p>${esc(r.equipment.join(" · "))}</p></div>` : ""}${r.allergens?.length ? `<p class="allergen-note">Alérgenos indicados: ${esc(r.allergens.join(", "))}. Comprueba etiquetas y posibles trazas.</p>` : ""}<div class="detail-columns"><section><div class="section-heading"><h3>Todos los ingredientes</h3><span class="count">${r.ingredients.length}</span></div><ul class="ingredient-list">${r.ingredients.map((i) => `<li class="${missing.includes(i) ? "missing" : ""}"><span>${missing.includes(i) ? "○" : "✓"}</span>${esc(i)}</li>`).join("")}</ul><p class="fine">✓ Coincide con un producto disponible. Confirma que la cantidad sea suficiente.</p>${missing.length ? button(`Añadir ${missing.length} faltantes a compras`, "missing-ingredients", idAttr(r.id)) : '<p class="success-note">Tienes los ingredientes. ¡A cocinar!</p>'}</section><section><h3>Preparación, paso a paso</h3><ol class="recipe-steps">${r.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol></section></div>${r.notes?.length ? `<section class="recipe-info"><h3>Consejos para que salga bien</h3><ul>${r.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></section>` : ""}<div class="video-note"><div><strong>¿Prefieres una guía en video?</strong><p class="fine">La búsqueda abre YouTube; los resultados son externos y pueden usar ingredientes diferentes.</p></div><a class="button secondary" href="${esc(r.videoUrl || "https://www.youtube.com/results?search_query=" + encodeURIComponent(r.title))}" target="_blank" rel="noopener noreferrer">${r.videoUrl && !r.videoUrl.includes("/results?") ? "Abrir video" : "Buscar en YouTube"} ↗</a></div><p class="fine">${esc(r.source || "Receta guardada en tu recetario personal.")}</p></div>`;
+}
+function profileForm() {
+  return `<form id="profile-form" class="form-stack"><p>Crea un perfil local cifrado. Tu contraseña nunca sale del dispositivo; no hay recuperación por correo.</p><label>Usuario<input name="username" required maxlength="80" autocomplete="username" value="${esc(auth.username || data.settings.displayName)}"></label>${auth.hasAccount ? '<label>Contraseña actual<input name="currentPassword" type="password" autocomplete="current-password" required></label>' : ""}<label>${auth.hasAccount ? "Nueva contraseña" : "Contraseña"}<input name="password" type="password" required minlength="10" autocomplete="new-password"></label><label>Repetir contraseña<input name="confirm" type="password" required minlength="10" autocomplete="new-password"></label><p class="fine">Al menos 10 caracteres. Guarda un respaldo y tu contraseña en un lugar seguro.</p><p class="form-error" role="alert"></p><button class="button">${auth.hasAccount ? "Cambiar contraseña" : "Crear perfil y cifrar mis datos"}</button></form>`;
+}
+function planChooser() {
+  const selected = ui.modal.recipeId,
+    query = ui.modal.query || "",
+    choices = selected
+      ? [recipeById(selected)].filter(Boolean)
+      : [
+          ...data.recipes
+            .filter(isRecipeAllowed)
+            .filter((r) => norm(r.title).includes(norm(query))),
+          ...recommendLocalRecipes({ query, pantry: data.products, limit: 30 }),
+        ];
+  return `<form id="plan-form" class="form-stack"><div class="form-grid"><label>Fecha<input name="date" type="date" required value="${esc(ui.modal.date || localDate())}"></label><label>Comida<select name="meal">${meals.map((m) => `<option value="${m}" ${m === (ui.modal.meal || "comida") ? "selected" : ""}>${m}</option>`).join("")}</select></label></div>${!selected ? `<div class="search-box"><input id="plan-search" value="${esc(query)}" placeholder="Buscar una receta" aria-label="Buscar receta para el menú">${button("Buscar", "plan-search", "", "text-button")}</div>` : ""}<label>Receta<select name="recipeId" required><option value="">Elige tu receta</option>${choices.map((r) => `<option value="${esc(r.id)}" ${selected === r.id ? "selected" : ""}>${esc(r.title)}</option>`).join("")}</select></label><p class="form-error" role="alert"></p><button class="button">Añadir a mi semana</button>${ui.modal.date && ui.modal.meal ? button("Dejar este espacio libre", "clear-plan", `data-date="${esc(ui.modal.date)}" data-meal="${ui.modal.meal}"`, "text-button danger-text") : ""}</form>`;
+}
+function modalContent() {
+  const m = ui.modal;
+  if (!m) return "";
+  let title = "",
+    body = "",
+    wide = false;
+  switch (m.type) {
+    case "product": {
+      title = m.id ? "Editar producto" : "Un nuevo básico en casa";
+      const purchase = entryById(m.fromShopping);
+      body = productEditor(
+        productById(m.id) ||
+          (purchase
+            ? {
+                name: purchase.name,
+                description: purchase.detail,
+                usualPrice: purchase.price || undefined,
+                photo: purchase.image,
+                category: purchase.source === "receta" ? "comida" : "otros",
+              }
+            : undefined),
+      );
+      break;
+    }
+    case "shopping":
+      title = m.id ? "Editar compra" : "Algo para tu lista";
+      body = shoppingEditor(entryById(m.id));
+      break;
+    case "task":
+      title = m.id ? "Editar pendiente" : "Dale un espacio en tu día";
+      body = taskEditor(data.tasks.find((t) => t.id === m.id));
+      break;
+    case "recipe":
+      title = recipeById(m.id)?.title || "Receta";
+      body = recipeDetail(recipeById(m.id));
+      wide = true;
+      break;
+    case "recipe-editor":
+      title = m.id ? "Editar receta" : "Tu receta, a tu manera";
+      body = recipeEditor(data.recipes.find((r) => r.id === m.id));
+      break;
+    case "profile":
+      title = auth.hasAccount ? "Cuida tu perfil" : "Un hogar con privacidad";
+      body = profileForm();
+      break;
+    case "plan":
+      title = "Una buena comida en tu semana";
+      body = planChooser();
+      break;
+    case "confirm":
+      title = m.title;
+      body = `<p>${esc(m.message)}</p><div class="dialog-actions">${button(m.label || "Confirmar", "confirm-action", "", "button danger-button")}${button("Cancelar", "close-modal", "", "button secondary")}</div>`;
+      break;
+    case "notifications":
+      title = "Un aviso a tiempo";
+      body = `<div class="dialog-actions">${button("Marcar todos como leídos", "read-notifications", "", "text-button")}</div>${data.notifications.map((n) => `<article class="notice ${n.read ? "read" : ""}"><span>${n.id.startsWith("stock:") ? "▱" : "◷"}</span><div><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p><small>${esc(new Date(n.time).toLocaleString("es-MX"))}</small></div></article>`).join("") || empty("Por aquí todo tranquilo", "Cuando algo necesite tu atención, lo verás aquí.")}`;
+      break;
+    case "restore":
+      title = "Restaurar tu respaldo";
+      body = `<form id="restore-form" class="form-stack"><p>Este respaldo reemplazará los datos actuales de este navegador. Exporta primero tus datos si quieres conservarlos.</p>${m.vault ? `<label>Usuario<input name="username" value="${esc(m.vault.username)}" autocomplete="username" required></label><label>Contraseña del respaldo<input name="password" type="password" required autocomplete="current-password"></label>` : `<p><strong>${m.value.products.length}</strong> productos · <strong>${m.value.recipes.length}</strong> recetas · <strong>${m.value.tasks.length}</strong> pendientes</p>`}<p class="form-error" role="alert"></p><button class="button">Restaurar y reemplazar datos</button>${button("Cancelar", "close-modal", "", "button secondary")}</form>`;
+      break;
+  }
+  return `<div class="modal-backdrop"><section class="dialog ${wide ? "dialog-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="dialog-header"><h2 id="dialog-title">${esc(title)}</h2>${button("×", "close-modal", 'aria-label="Cerrar ventana"', "circle")}</div>${body}</section></div>`;
+}
+function lockScreen() {
+  return `<main class="lock-page"><section class="lock-intro"><img src="${BASE}icon-512.png" alt="Logo de Foráneo"><p class="light-label">TU CASA, CONTIGO.</p><h1>Un pequeño espacio.<br>Toda tu vida en orden.</h1><p>Tu despensa, tus recetas y tus planes, solo para ti.</p></section><section class="lock-card"><p class="eyebrow">BIENVENIDO A CASA</p><h2>Qué bueno verte de nuevo.</h2><p class="muted">Abre tu perfil local para continuar.</p><form id="login-form" class="form-stack"><label>Usuario<input name="username" autocomplete="username" maxlength="80" required value="${esc(auth.username)}"></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><p class="form-error" role="alert"></p><button class="button">Entrar a mi hogar</button></form><p class="fine">Sin cuentas externas. Tus datos permanecen cifrados en este dispositivo. La contraseña no se puede recuperar.</p>${button("Restaurar un respaldo", "import-backup", "", "text-button")}<input id="backup-file" type="file" accept=".json,application/json" hidden><small class="signature">by Joseph Ubaldo Trejo Hernandez</small></section></main>`;
+}
+function recoveryScreen() {
+  return `<main class="recovery-page panel"><img src="${BASE}icon-192.png" alt="Foráneo"><h1>Vamos a cuidar tus datos.</h1><p>${esc(startupError)}</p><p>No guardaremos cambios encima del archivo original.</p><div class="settings-actions">${button("Descargar datos originales", "export-recovery")}${button("Restaurar un respaldo", "import-backup", "", "button secondary")}${button("Empezar de nuevo", "reset-recovery", "", "text-button danger-text")}</div><input id="backup-file" type="file" accept=".json,application/json" hidden></main>`;
+}
+function render() {
+  applyTheme();
+  const pages = {
+    inicio: dashboard,
+    despensa: inventory,
+    compras: purchases,
+    cocina: kitchen,
+    agenda,
+    ajustes: settings,
+  };
+  app.innerHTML = recoveryRequired
+    ? recoveryScreen()
+    : isLocked()
+      ? lockScreen()
+      : `<div class="app-shell"><aside class="sidebar"><a class="brand" href="#inicio" data-action="navigate" data-page="inicio"><img src="${BASE}icon-192.png" alt="Logo de Foráneo"><span>Foráneo<small>tu casa, contigo.</small></span></a><p class="nav-label">MI HOGAR</p><nav class="side-nav" aria-label="Navegación principal">${navigation.map(([key, icon, label]) => button(`<span>${icon}</span>${label}`, "navigate", `data-page="${key}" ${ui.page === key ? 'aria-current="page"' : ""}`, "nav-item" + (ui.page === key ? " active" : ""))).join("")}</nav><div class="sidebar-bottom"><div class="offline-label"><span></span> Tu hogar, contigo</div><p>Organiza, cocina y disfruta<br>a tu propio ritmo.</p>${button("⚙ Ajustes y mi perfil", "navigate", 'data-page="ajustes"', "nav-item" + (ui.page === "ajustes" ? " active" : ""))}<small>by Joseph Ubaldo Trejo Hernandez</small></div></aside><div class="main-area"><div class="mobile-brand"><img src="${BASE}icon-192.png" alt=""><span>Foráneo</span><small>tu casa, contigo.</small></div><main id="main-content">${header()}${(pages[ui.page] || dashboard)()}</main><footer class="site-footer">Hecho para sentirte en casa. <span>Foráneo · 2.2</span></footer></div><nav class="bottom-nav" aria-label="Navegación móvil">${navigation.map(([key, icon, label]) => button(`<span>${icon}</span><small>${label}</small>`, "navigate", `data-page="${key}" ${ui.page === key ? 'aria-current="page"' : ""}`, "bottom-item" + (ui.page === key ? " active" : ""))).join("")}</nav></div>`;
+  app.insertAdjacentHTML(
+    "beforeend",
+    modalContent() +
+      (ui.toast
+        ? `<div class="toast ${ui.tone}" role="status">${esc(ui.toast)}${button("×", "dismiss-toast", 'aria-label="Cerrar aviso"', "text-button")}</div>`
+        : ""),
+  );
+  document.body.classList.toggle("modal-open", Boolean(ui.modal));
+  document.title = `Foráneo${ui.page === "inicio" ? "" : " · " + ({ ajustes: "Ajustes", despensa: "Despensa", compras: "Compras", cocina: "Cocina", agenda: "Agenda" }[ui.page] || "")}`;
+}
+function formError(form, error) {
+  const element = form.querySelector(".form-error");
+  if (element) {
+    element.textContent = error.message || String(error);
+    element.focus();
+  } else notify(error.message || String(error), "danger");
+}
+function download(filename, contents, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([contents], { type })),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+function confirmAction(title, message, callback, label) {
+  openModal("confirm", { title, message, callback, label });
+}
+function shiftWeek(scope, amount) {
+  const key = scope === "agenda" ? "agendaDate" : "week",
+    date = new Date(ui[key] + "T12:00:00");
+  date.setDate(date.getDate() + amount);
+  ui[key] = localDate(date);
+  render();
+}
+function addMissing(r) {
+  let count = 0;
+  for (const ingredient of missingIngredients(r, data.products)) {
+    if (data.shopping.some((e) => ingredientMatches(e.name, ingredient)))
+      continue;
+    const existing = data.products.find(
+      (p) => p.category === "comida" && ingredientMatches(p.name, ingredient),
+    );
+    if (existing && status(existing) !== "stocked") continue;
+    data.shopping.unshift({
+      id: uuid(),
+      name: ingredient,
+      detail: "Para " + r.title,
+      kind: "low",
+      image: "",
+      price: 0,
+      source: "receta",
+    });
+    count++;
+  }
+  commit(
+    count
+      ? `${count} ingredientes añadidos a compras.`
+      : "Los ingredientes faltantes ya están en tu lista.",
+  );
+}
+async function readImage(file) {
+  const modal = ui.modal;
+  if (!file || !modal) return;
+  if (file.size > 15 * 1024 * 1024)
+    throw new Error("La foto supera 15 MB. Elige una imagen más pequeña.");
+  if (!file.type.startsWith("image/"))
+    throw new Error("Selecciona un archivo de imagen.");
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () =>
+        reject(new Error("No se pudo abrir esa imagen. Prueba con JPG o PNG."));
+      img.src = url;
+    });
+    if (ui.modal !== modal || !$("#photo-preview")) return;
+    const scale = Math.min(1, 1000 / Math.max(image.width, image.height)),
+      canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    imageDraft = canvas.toDataURL("image/jpeg", 0.8);
+    $("#photo-preview").src = imageDraft;
+    ui.modal.photoChanged = true;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+async function takePhoto() {
+  const modal = ui.modal;
+  if (!modal) return;
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    return $("#camera-file")?.click();
+  }
+  if (!navigator.mediaDevices?.getUserMedia) return $("#camera-file")?.click();
+  stopCamera();
+  const request = cameraRequest;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } },
+      audio: false,
+    });
+    if (request !== cameraRequest || ui.modal !== modal || document.hidden) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    cameraStream = stream;
+    $("#camera-panel").hidden = false;
+    $("#camera-preview").srcObject = cameraStream;
+    await $("#camera-preview").play();
+  } catch {
+    if (request !== cameraRequest || ui.modal !== modal) return;
+    stopCamera();
+    const error = $(".dialog .form-error");
+    if (error)
+      error.textContent =
+        "No pudimos acceder a la cámara. Permite su uso en tu navegador o elige una foto.";
+  }
+}
+async function enableNotifications() {
+  if (!("Notification" in window)) {
+    notify(
+      "Este navegador no permite avisos del sistema. En iPhone instala la web en pantalla de inicio; también puedes usar la app Android.",
+      "danger",
+    );
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    notify(
+      "Los avisos no están permitidos. Puedes habilitarlos en los ajustes del navegador.",
+      "danger",
+    );
+    return;
+  }
+  data.settings.notifications = true;
+  await persist();
+  await deviceNotification(
+    "Foráneo · Todo listo",
+    "Tus avisos están activados mientras la web está abierta.",
+    "foraneo-test",
+  );
+  notify("Enviamos un aviso de prueba. Tu dispositivo decide cómo mostrarlo.");
+}
 
-app.addEventListener('click',async event=>{const el=event.target.closest('[data-action]');if(!el)return;event.preventDefault();const action=el.dataset.action,id=el.dataset.id,p=productById(id);try{switch(action){case'navigate':closeModal();ui.page=el.dataset.page;ui.query='';render();window.scrollTo({top:0,behavior:'instant'});break;case'category':ui.category=el.dataset.category;render();break;case'dismiss-toast':ui.toast=null;render();break;case'close-modal':closeModal();break;case'new-product':openModal('product');break;case'edit-product':openModal('product',{id});break;case'delete-product':if(p)confirmAction('¿Eliminar este producto?',`${p.name} se eliminará de Despensa y de las compras automáticas.`,()=>{data.products=data.products.filter(v=>v.id!==id);commit('Producto eliminado.');},'Eliminar producto');break;case'consume':if(p){p.stock=Math.max(0,Math.round((p.stock-1)*1000)/1000);commit('Consumo registrado.');}break;case'restock':if(p){p.stock=Math.round((p.stock+1)*1000)/1000;p.lastPurchase=localDate();commit('Una unidad más en casa.');}break;case'food-recipes':if(p){ui.recipeQuery=p.name;ui.kitchenTab='recetas';ui.page='cocina';ui.recipeLimit=12;render();}break;case'new-shopping':openModal('shopping');break;case'edit-shopping':openModal('shopping',{id});break;case'delete-shopping':confirmAction('¿Quitar esta compra?',entryById(id)?.name||'Se quitará de tu lista.',()=>{data.shopping=data.shopping.filter(e=>e.id!==id);commit('Compra eliminada.');},'Quitar de la lista');break;case'buy-shopping':if(el.dataset.product==='yes'&&p){p.stock=Math.round((p.stock+1)*1000)/1000;p.lastPurchase=localDate();commit('Una unidad comprada. Ajusta la cantidad en Editar si compraste más.');}else{const e=entryById(id);if(e)openModal('product',{fromShopping:id});}break;case'register-purchase':if(ui.price){const item=productById(ui.price.productId);if(item){item.stock+=1;item.lastPurchase=localDate();commit('Compra registrada. Se conserva tu precio habitual para futuras comparaciones.');}}break;case'recipe':openModal('recipe',{id});break;case'kitchen-tab':ui.kitchenTab=el.dataset.tab;render();break;case'more-recipes':ui.recipeLimit=Math.min(200,ui.recipeLimit+12);render();break;case'favorite':if(data.favorites.includes(id))data.favorites=data.favorites.filter(v=>v!==id);else data.favorites.push(id);commit();break;case'new-recipe':openModal('recipe-editor');break;case'edit-recipe':openModal('recipe-editor',{id});break;case'delete-recipe':confirmAction('¿Eliminar esta receta?',`${recipeById(id)?.title||'La receta'} también se quitará de tu menú.`,()=>{data.recipes=data.recipes.filter(r=>r.id!==id);data.favorites=data.favorites.filter(v=>v!==id);Object.values(data.mealPlans).forEach(day=>meals.forEach(m=>{if(day[m]===id)day[m]='';}));commit('Receta eliminada.');},'Eliminar receta');break;case'missing-ingredients':if(recipeById(id))addMissing(recipeById(id));break;case'plan-recipe':openModal('plan',{recipeId:id});break;case'plan-slot':openModal('plan',{date:el.dataset.date,meal:el.dataset.meal});break;case'plan-search':{const date=$('#plan-form [name=date]').value,meal=$('#plan-form [name=meal]').value;ui.modal={...ui.modal,query:$('#plan-search').value,date,meal};render();break;}case'clear-plan':if(data.mealPlans[el.dataset.date])delete data.mealPlans[el.dataset.date][el.dataset.meal];closeModal();commit('Espacio libre en tu menú.');break;case'week-prev':shiftWeek(el.dataset.scope,-7);break;case'week-next':shiftWeek(el.dataset.scope,7);break;case'week-today':ui[el.dataset.scope==='agenda'?'agendaDate':'week']=localDate();render();break;case'select-date':ui.agendaDate=el.dataset.date;render();break;case'new-task':openModal('task');break;case'edit-task':openModal('task',{id});break;case'delete-task':confirmAction('¿Eliminar este pendiente?',data.tasks.find(t=>t.id===id)?.title||'',()=>{data.tasks=data.tasks.filter(t=>t.id!==id);commit('Pendiente eliminado.');},'Eliminar pendiente');break;case'export-calendar':download(`foraneo-semana-${weekDates(ui.agendaDate)[0]}.ics`,calendarIcs(data.tasks.filter(t=>weekDates(ui.agendaDate).includes(t.date))),'text/calendar;charset=utf-8');break;case'notifications':openModal('notifications');break;case'read-notifications':data.notifications.forEach(n=>n.read=true);commit();break;case'enable-notifications':await enableNotifications();break;case'disable-notifications':data.settings.notifications=false;commit('Avisos del sistema desactivados.');break;case'install':if(installPrompt){await installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;}else notify('Usa el menú del navegador → Instalar aplicación o Añadir a pantalla de inicio.');break;case'create-profile':openModal('profile');break;case'lock':await saveQueue;auth.lock();data=defaults();ui.modal=null;ui.toast=null;render();break;case'export-backup':await saveQueue;if(auth.hasAccount){await auth.save(data);download(`foraneo-cifrado-${localDate()}.json`,auth.export());}else download(`foraneo-respaldo-${localDate()}.json`,JSON.stringify({format:'foraneo-backup',version:2,...data},null,2));break;case'import-backup':$('#backup-file')?.click();break;case'pick-photo':$('#photo-file')?.click();break;case'take-photo':await takePhoto();break;case'capture-photo':{const video=$('#camera-preview');if(!video?.videoWidth)throw new Error('Espera a que la cámara esté lista.');const canvas=document.createElement('canvas');const scale=Math.min(1,1000/video.videoWidth);canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);imageDraft=canvas.toDataURL('image/jpeg',0.8);ui.modal.photoChanged=true;$('#photo-preview').src=imageDraft;stopCamera();$('#camera-panel').hidden=true;break;}case'stop-camera':stopCamera();$('#camera-panel').hidden=true;break;case'remove-photo':imageDraft='';ui.modal.photoChanged=true;$('#photo-preview').src=fallbackPhoto();break;case'confirm-action':{const callback=ui.modal.callback;closeModal();await callback();break;}case'export-recovery':download(`foraneo-datos-originales-${localDate()}.json`,localStorage.getItem('foraneo-vault-v1')||localStorage.getItem(STORE)||localStorage.getItem(LEGACY)||'{}');break;case'reset-recovery':confirmAction('¿Empezar un hogar nuevo?','Descarga antes los datos originales. Esta acción quitará el archivo que no se pudo leer.',()=>{localStorage.removeItem('foraneo-vault-v1');localStorage.removeItem(STORE);localStorage.removeItem(LEGACY);auth=new LocalAuth(localStorage);recoveryRequired=false;data=defaults();ui.toast=null;commit('Un nuevo comienzo.');},'Eliminar datos dañados y comenzar');break;}}catch(error){notify(error.message||'No se pudo completar la acción.','danger');}});
+app.addEventListener("click", async (event) => {
+  const el = event.target.closest("[data-action]");
+  if (!el) return;
+  event.preventDefault();
+  const action = el.dataset.action,
+    id = el.dataset.id,
+    p = productById(id);
+  try {
+    switch (action) {
+      case "navigate":
+        closeModal();
+        ui.page = el.dataset.page;
+        ui.query = "";
+        if (ui.page === "cocina" && !catalogLoaded) {
+          ui.catalogLoading = true;
+          render();
+          await ensureCatalog();
+          ui.catalogLoading = false;
+        }
+        render();
+        window.scrollTo({ top: 0, behavior: "instant" });
+        break;
+      case "category":
+        ui.category = el.dataset.category;
+        render();
+        break;
+      case "dismiss-toast":
+        ui.toast = null;
+        render();
+        break;
+      case "close-modal":
+        closeModal();
+        break;
+      case "new-product":
+        openModal("product");
+        break;
+      case "edit-product":
+        openModal("product", { id });
+        break;
+      case "delete-product":
+        if (p)
+          confirmAction(
+            "¿Eliminar este producto?",
+            `${p.name} se eliminará de Despensa y de las compras automáticas.`,
+            () => {
+              data.products = data.products.filter((v) => v.id !== id);
+              commit("Producto eliminado.");
+            },
+            "Eliminar producto",
+          );
+        break;
+      case "consume":
+        if (p) {
+          p.stock = Math.max(0, Math.round((p.stock - 1) * 1000) / 1000);
+          commit("Consumo registrado.");
+        }
+        break;
+      case "restock":
+        if (p) {
+          p.stock = Math.round((p.stock + 1) * 1000) / 1000;
+          p.lastPurchase = localDate();
+          commit("Una unidad más en casa.");
+        }
+        break;
+      case "food-recipes":
+        if (p) {
+          ui.recipeQuery = p.name;
+          ui.kitchenTab = "recetas";
+          ui.page = "cocina";
+          ui.recipeLimit = 12;
+          if (!catalogLoaded) {
+            ui.catalogLoading = true;
+            render();
+            await ensureCatalog();
+            ui.catalogLoading = false;
+          }
+          render();
+        }
+        break;
+      case "new-shopping":
+        openModal("shopping");
+        break;
+      case "edit-shopping":
+        openModal("shopping", { id });
+        break;
+      case "delete-shopping":
+        confirmAction(
+          "¿Quitar esta compra?",
+          entryById(id)?.name || "Se quitará de tu lista.",
+          () => {
+            data.shopping = data.shopping.filter((e) => e.id !== id);
+            commit("Compra eliminada.");
+          },
+          "Quitar de la lista",
+        );
+        break;
+      case "buy-shopping":
+        if (el.dataset.product === "yes" && p) {
+          p.stock = Math.round((p.stock + 1) * 1000) / 1000;
+          p.lastPurchase = localDate();
+          commit(
+            "Una unidad comprada. Ajusta la cantidad en Editar si compraste más.",
+          );
+        } else {
+          const e = entryById(id);
+          if (e) openModal("product", { fromShopping: id });
+        }
+        break;
+      case "register-purchase":
+        if (ui.price) {
+          const item = productById(ui.price.productId);
+          if (item) {
+            item.stock += 1;
+            item.lastPurchase = localDate();
+            commit(
+              "Compra registrada. Se conserva tu precio habitual para futuras comparaciones.",
+            );
+          }
+        }
+        break;
+      case "recipe":
+        {
+          const recipe = await ensureRecipeDetails(id);
+          if (!recipe)
+            throw new Error("No encontramos esa receta. Intenta abrirla de nuevo.");
+          openModal("recipe", { id });
+        }
+        break;
+      case "kitchen-tab":
+        ui.kitchenTab = el.dataset.tab;
+        render();
+        break;
+      case "more-recipes":
+        ui.recipeLimit = Math.min(200, ui.recipeLimit + 12);
+        render();
+        break;
+      case "favorite":
+        if (data.favorites.includes(id))
+          data.favorites = data.favorites.filter((v) => v !== id);
+        else data.favorites.push(id);
+        commit();
+        break;
+      case "new-recipe":
+        openModal("recipe-editor");
+        break;
+      case "edit-recipe":
+        openModal("recipe-editor", { id });
+        break;
+      case "delete-recipe":
+        confirmAction(
+          "¿Eliminar esta receta?",
+          `${recipeById(id)?.title || "La receta"} también se quitará de tu menú.`,
+          () => {
+            data.recipes = data.recipes.filter((r) => r.id !== id);
+            data.favorites = data.favorites.filter((v) => v !== id);
+            Object.values(data.mealPlans).forEach((day) =>
+              meals.forEach((m) => {
+                if (day[m] === id) day[m] = "";
+              }),
+            );
+            commit("Receta eliminada.");
+          },
+          "Eliminar receta",
+        );
+        break;
+      case "missing-ingredients":
+        if (recipeById(id)) addMissing(recipeById(id));
+        break;
+      case "plan-recipe":
+        openModal("plan", { recipeId: id });
+        break;
+      case "plan-slot":
+        openModal("plan", { date: el.dataset.date, meal: el.dataset.meal });
+        break;
+      case "plan-search": {
+        const date = $("#plan-form [name=date]").value,
+          meal = $("#plan-form [name=meal]").value;
+        ui.modal = { ...ui.modal, query: $("#plan-search").value, date, meal };
+        render();
+        break;
+      }
+      case "clear-plan":
+        if (data.mealPlans[el.dataset.date])
+          delete data.mealPlans[el.dataset.date][el.dataset.meal];
+        closeModal();
+        commit("Espacio libre en tu menú.");
+        break;
+      case "week-prev":
+        shiftWeek(el.dataset.scope, -7);
+        break;
+      case "week-next":
+        shiftWeek(el.dataset.scope, 7);
+        break;
+      case "week-today":
+        ui[el.dataset.scope === "agenda" ? "agendaDate" : "week"] = localDate();
+        render();
+        break;
+      case "select-date":
+        ui.agendaDate = el.dataset.date;
+        render();
+        break;
+      case "new-task":
+        openModal("task");
+        break;
+      case "edit-task":
+        openModal("task", { id });
+        break;
+      case "delete-task":
+        confirmAction(
+          "¿Eliminar este pendiente?",
+          data.tasks.find((t) => t.id === id)?.title || "",
+          () => {
+            data.tasks = data.tasks.filter((t) => t.id !== id);
+            commit("Pendiente eliminado.");
+          },
+          "Eliminar pendiente",
+        );
+        break;
+      case "export-calendar":
+        download(
+          `foraneo-semana-${weekDates(ui.agendaDate)[0]}.ics`,
+          calendarIcs(
+            data.tasks.filter((t) => weekDates(ui.agendaDate).includes(t.date)),
+          ),
+          "text/calendar;charset=utf-8",
+        );
+        break;
+      case "notifications":
+        openModal("notifications");
+        break;
+      case "read-notifications":
+        data.notifications.forEach((n) => (n.read = true));
+        commit();
+        break;
+      case "enable-notifications":
+        await enableNotifications();
+        break;
+      case "disable-notifications":
+        data.settings.notifications = false;
+        commit("Avisos del sistema desactivados.");
+        break;
+      case "install":
+        if (installPrompt) {
+          await installPrompt.prompt();
+          await installPrompt.userChoice;
+          installPrompt = null;
+        } else
+          notify(
+            "Usa el menú del navegador → Instalar aplicación o Añadir a pantalla de inicio.",
+          );
+        break;
+      case "create-profile":
+        openModal("profile");
+        break;
+      case "lock":
+        await saveQueue;
+        auth.lock();
+        data = defaults();
+        ui.modal = null;
+        ui.toast = null;
+        render();
+        break;
+      case "export-backup":
+        await saveQueue;
+        if (auth.hasAccount) {
+          await auth.save(data);
+          download(`foraneo-cifrado-${localDate()}.json`, auth.export());
+        } else
+          download(
+            `foraneo-respaldo-${localDate()}.json`,
+            JSON.stringify(
+              { format: "foraneo-backup", version: 2, ...data },
+              null,
+              2,
+            ),
+          );
+        break;
+      case "import-backup":
+        $("#backup-file")?.click();
+        break;
+      case "pick-photo":
+        $("#photo-file")?.click();
+        break;
+      case "take-photo":
+        await takePhoto();
+        break;
+      case "capture-photo": {
+        const video = $("#camera-preview");
+        if (!video?.videoWidth)
+          throw new Error("Espera a que la cámara esté lista.");
+        const canvas = document.createElement("canvas");
+        const scale = Math.min(1, 1000 / video.videoWidth);
+        canvas.width = Math.round(video.videoWidth * scale);
+        canvas.height = Math.round(video.videoHeight * scale);
+        canvas
+          .getContext("2d")
+          .drawImage(video, 0, 0, canvas.width, canvas.height);
+        imageDraft = canvas.toDataURL("image/jpeg", 0.8);
+        ui.modal.photoChanged = true;
+        $("#photo-preview").src = imageDraft;
+        stopCamera();
+        $("#camera-panel").hidden = true;
+        break;
+      }
+      case "stop-camera":
+        stopCamera();
+        $("#camera-panel").hidden = true;
+        break;
+      case "remove-photo":
+        imageDraft = "";
+        ui.modal.photoChanged = true;
+        $("#photo-preview").src = fallbackPhoto();
+        break;
+      case "confirm-action": {
+        const callback = ui.modal.callback;
+        closeModal();
+        await callback();
+        break;
+      }
+      case "export-recovery":
+        download(
+          `foraneo-datos-originales-${localDate()}.json`,
+          localStorage.getItem("foraneo-vault-v1") ||
+            localStorage.getItem(STORE) ||
+            localStorage.getItem(LEGACY) ||
+            "{}",
+        );
+        break;
+      case "reset-recovery":
+        confirmAction(
+          "¿Empezar un hogar nuevo?",
+          "Descarga antes los datos originales. Esta acción quitará el archivo que no se pudo leer.",
+          () => {
+            localStorage.removeItem("foraneo-vault-v1");
+            localStorage.removeItem(STORE);
+            localStorage.removeItem(LEGACY);
+            auth = new LocalAuth(localStorage);
+            recoveryRequired = false;
+            data = defaults();
+            ui.toast = null;
+            commit("Un nuevo comienzo.");
+          },
+          "Eliminar datos dañados y comenzar",
+        );
+        break;
+    }
+  } catch (error) {
+    notify(error.message || "No se pudo completar la acción.", "danger");
+  }
+});
 
-app.addEventListener('submit',async event=>{event.preventDefault();const form=event.target;if(!form.reportValidity())return;const fields=new FormData(form),get=name=>String(fields.get(name)||'').trim(),num=name=>Number(get(name)),submit=form.querySelector('button:not([type="button"])');if(submit)submit.disabled=true;try{switch(form.getAttribute('id')){case'inventory-search':ui.query=get('query');render();break;case'recipe-search':ui.recipeQuery=get('query');ui.recipeLimit=12;render();break;case'product-form':{const old=productById(get('id')),fromShopping=ui.modal.fromShopping,id=old?.id||uuid(),item={...old,id,name:get('name'),description:get('description'),category:get('category'),usualPrice:num('usualPrice'),contentValue:num('contentValue'),contentUnit:get('contentUnit'),stock:num('stock'),lowAt:num('lowAt'),photo:ui.modal.photoChanged?imageDraft:(old?.photo||entryById(fromShopping)?.image||''),lastPurchase:old?.lastPurchase||localDate()};if(!item.name)throw new Error('Escribe el nombre del producto.');if(![item.usualPrice,item.contentValue,item.stock,item.lowAt].every(Number.isFinite))throw new Error('Revisa los números del producto.');if(old)data.products=data.products.map(p=>p.id===id?item:p);else data.products.unshift(item);if(fromShopping)data.shopping=data.shopping.filter(e=>e.id!==fromShopping);closeModal();commit(old?'Producto actualizado.':'Tu producto ya está en casa.');break;}case'shopping-form':{const old=entryById(get('id')),item={...old,id:old?.id||uuid(),name:get('name'),detail:get('detail'),kind:get('kind'),price:num('price'),source:old?.source||'manual',image:ui.modal.photoChanged?imageDraft:(old?.image||'')};if(!item.name)throw new Error('Escribe qué necesitas comprar.');if(old)data.shopping=data.shopping.map(e=>e.id===item.id?item:e);else data.shopping.unshift(item);closeModal();commit('Lista de compras actualizada.');break;}case'price-form':{const p=productById(get('productId'));if(!p)throw new Error('Selecciona un producto.');ui.price={productId:p.id,price:num('price'),contentValue:num('contentValue'),contentUnit:get('contentUnit'),result:evaluateComparablePrice({usualPrice:p.usualPrice,usualContentValue:p.contentValue,usualContentUnit:p.contentUnit,proposedPrice:num('price'),proposedContentValue:num('contentValue'),proposedContentUnit:get('contentUnit')})};render();break;}case'recipe-form':{const old=data.recipes.find(r=>r.id===get('id')),r={id:old?.id||uuid(),title:get('title'),description:get('description'),ingredients:get('ingredients').split('\n').map(s=>s.trim()).filter(Boolean),steps:get('steps').split('\n').map(s=>s.trim()).filter(Boolean),time:get('time'),servings:num('servings'),cuisine:get('cuisine'),tag:'Mi receta',image:ui.modal.photoChanged?imageDraft:(old?.image||''),videoUrl:get('videoUrl')};if(!r.title||!r.ingredients.length||!r.steps.length)throw new Error('Completa el nombre, los ingredientes y los pasos.');if(r.ingredients.length>100||r.steps.length>100)throw new Error('Usa como máximo 100 ingredientes y 100 pasos.');if(!isRecipeAllowed(r))throw new Error('Esta receta no coincide con tus preferencias de huevo y arroz. Revisa los ingredientes y la preparación.');if(r.videoUrl&&!/^https:\/\/(www\.)?(youtube\.com|youtu\.be)\//.test(r.videoUrl))throw new Error('Usa una dirección HTTPS de YouTube o deja el video vacío.');if(old)data.recipes=data.recipes.map(v=>v.id===r.id?r:v);else data.recipes.unshift(r);if(!data.favorites.includes(r.id))data.favorites.push(r.id);ui.kitchenTab='favoritas';closeModal();commit('Tu receta está guardada.');break;}case'plan-form':{const date=get('date'),meal=get('meal'),recipeId=get('recipeId');if(!validDate(date)||!meals.includes(meal)||!recipeById(recipeId))throw new Error('Elige una fecha y una receta válidas.');data.mealPlans[date]??={};data.mealPlans[date][meal]=recipeId;ui.week=date;closeModal();commit('Tu menú está tomando forma.');break;}case'task-form':{const old=data.tasks.find(t=>t.id===get('id')),t={...old,id:old?.id||uuid(),title:get('title'),notes:get('notes'),date:get('date'),time:get('time'),priority:get('priority'),completed:old?.completed||false,reminded:false};if(!t.title||!validDate(t.date))throw new Error('Escribe un pendiente y una fecha válidos.');if(old)data.tasks=data.tasks.map(v=>v.id===t.id?t:v);else data.tasks.push(t);ui.agendaDate=t.date;closeModal();commit('Pendiente guardado en tu agenda.');checkReminders();break;}case'settings-form':data.settings.theme=get('theme');data.settings.displayName=get('displayName');commit('Así se siente más tuyo.');break;case'profile-form':{if(get('password')!==get('confirm'))throw new Error('Las contraseñas no coinciden.');await saveQueue;if(auth.hasAccount){const check=new LocalAuth(localStorage);await check.unlock(auth.username,get('currentPassword'));check.lock();}await auth.create(get('username'),get('password'),data);localStorage.removeItem(STORE);localStorage.removeItem(LEGACY);closeModal();notify('Tu perfil está cifrado. Guarda un respaldo y tu contraseña.');break;}case'login-form':{const check=new LocalAuth(localStorage),opened=validateState(await check.unlock(get('username'),get('password')));data=opened;auth=check;localStorage.removeItem(STORE);localStorage.removeItem(LEGACY);syncStock();render();checkReminders();break;}case'restore-form':{await saveQueue.catch(()=>{});const modal=ui.modal;let opened,nextAuth=auth;if(modal.vault){const storage={getItem:()=>null,setItem:(k,v)=>localStorage.setItem(k,v)};nextAuth=new LocalAuth(storage);opened=validateState(await nextAuth.unlock(get('username'),get('password'),modal.vault));await nextAuth.save(opened);}else{if(isLocked())throw new Error('Desbloquea tu perfil antes de restaurar un respaldo sin cifrar.');opened=validateState(modal.value);if(auth.hasAccount)await auth.save(opened);else localStorage.setItem(STORE,JSON.stringify(opened));}data=opened;auth=nextAuth;recoveryRequired=false;if(auth.hasAccount){localStorage.removeItem(STORE);localStorage.removeItem(LEGACY);}else{localStorage.removeItem('foraneo-vault-v1');localStorage.removeItem(LEGACY);}closeModal();notify('Respaldo restaurado. Tus datos están listos.');break;}}}catch(error){formError(form,error);}finally{if(submit)submit.disabled=false;}});
+app.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  if (!form.reportValidity()) return;
+  const fields = new FormData(form),
+    get = (name) => String(fields.get(name) || "").trim(),
+    num = (name) => Number(get(name)),
+    submit = form.querySelector('button:not([type="button"])');
+  if (submit) submit.disabled = true;
+  try {
+    switch (form.getAttribute("id")) {
+      case "inventory-search":
+        ui.query = get("query");
+        render();
+        break;
+      case "recipe-search":
+        ui.recipeQuery = get("query");
+        ui.recipeLimit = 12;
+        render();
+        break;
+      case "product-form": {
+        const old = productById(get("id")),
+          fromShopping = ui.modal.fromShopping,
+          id = old?.id || uuid(),
+          item = {
+            ...old,
+            id,
+            name: get("name"),
+            description: get("description"),
+            category: get("category"),
+            usualPrice: num("usualPrice"),
+            contentValue: num("contentValue"),
+            contentUnit: get("contentUnit"),
+            stock: num("stock"),
+            lowAt: num("lowAt"),
+            photo: ui.modal.photoChanged
+              ? imageDraft
+              : old?.photo || entryById(fromShopping)?.image || "",
+            lastPurchase: old?.lastPurchase || localDate(),
+          };
+        if (!item.name) throw new Error("Escribe el nombre del producto.");
+        if (
+          ![item.usualPrice, item.contentValue, item.stock, item.lowAt].every(
+            Number.isFinite,
+          )
+        )
+          throw new Error("Revisa los números del producto.");
+        if (old)
+          data.products = data.products.map((p) => (p.id === id ? item : p));
+        else data.products.unshift(item);
+        if (fromShopping)
+          data.shopping = data.shopping.filter((e) => e.id !== fromShopping);
+        closeModal();
+        commit(old ? "Producto actualizado." : "Tu producto ya está en casa.");
+        break;
+      }
+      case "shopping-form": {
+        const old = entryById(get("id")),
+          item = {
+            ...old,
+            id: old?.id || uuid(),
+            name: get("name"),
+            detail: get("detail"),
+            kind: get("kind"),
+            price: num("price"),
+            source: old?.source || "manual",
+            image: ui.modal.photoChanged ? imageDraft : old?.image || "",
+          };
+        if (!item.name) throw new Error("Escribe qué necesitas comprar.");
+        if (old)
+          data.shopping = data.shopping.map((e) =>
+            e.id === item.id ? item : e,
+          );
+        else data.shopping.unshift(item);
+        closeModal();
+        commit("Lista de compras actualizada.");
+        break;
+      }
+      case "price-form": {
+        const p = productById(get("productId"));
+        if (!p) throw new Error("Selecciona un producto.");
+        ui.price = {
+          productId: p.id,
+          price: num("price"),
+          contentValue: num("contentValue"),
+          contentUnit: get("contentUnit"),
+          result: evaluateComparablePrice({
+            usualPrice: p.usualPrice,
+            usualContentValue: p.contentValue,
+            usualContentUnit: p.contentUnit,
+            proposedPrice: num("price"),
+            proposedContentValue: num("contentValue"),
+            proposedContentUnit: get("contentUnit"),
+          }),
+        };
+        render();
+        break;
+      }
+      case "recipe-form": {
+        const old = data.recipes.find((r) => r.id === get("id")),
+          r = {
+            id: old?.id || uuid(),
+            title: get("title"),
+            description: get("description"),
+            ingredients: get("ingredients")
+              .split("\n")
+              .map((s) => s.trim())
+              .filter(Boolean),
+            steps: get("steps")
+              .split("\n")
+              .map((s) => s.trim())
+              .filter(Boolean),
+            time: get("time"),
+            servings: num("servings"),
+            cuisine: get("cuisine"),
+            tag: "Mi receta",
+            image: ui.modal.photoChanged ? imageDraft : old?.image || "",
+            videoUrl: get("videoUrl"),
+          };
+        if (!r.title || !r.ingredients.length || !r.steps.length)
+          throw new Error("Completa el nombre, los ingredientes y los pasos.");
+        if (r.ingredients.length > 100 || r.steps.length > 100)
+          throw new Error("Usa como máximo 100 ingredientes y 100 pasos.");
+        if (!isRecipeAllowed(r))
+          throw new Error(
+            "Esta receta no coincide con tus preferencias de huevo y arroz. Revisa los ingredientes y la preparación.",
+          );
+        if (
+          r.videoUrl &&
+          !/^https:\/\/(www\.)?(youtube\.com|youtu\.be)\//.test(r.videoUrl)
+        )
+          throw new Error(
+            "Usa una dirección HTTPS de YouTube o deja el video vacío.",
+          );
+        if (old)
+          data.recipes = data.recipes.map((v) => (v.id === r.id ? r : v));
+        else data.recipes.unshift(r);
+        if (!data.favorites.includes(r.id)) data.favorites.push(r.id);
+        ui.kitchenTab = "favoritas";
+        closeModal();
+        commit("Tu receta está guardada.");
+        break;
+      }
+      case "plan-form": {
+        const date = get("date"),
+          meal = get("meal"),
+          recipeId = get("recipeId");
+        if (!validDate(date) || !meals.includes(meal) || !recipeById(recipeId))
+          throw new Error("Elige una fecha y una receta válidas.");
+        data.mealPlans[date] ??= {};
+        data.mealPlans[date][meal] = recipeId;
+        ui.week = date;
+        closeModal();
+        commit("Tu menú está tomando forma.");
+        break;
+      }
+      case "task-form": {
+        const old = data.tasks.find((t) => t.id === get("id")),
+          t = {
+            ...old,
+            id: old?.id || uuid(),
+            title: get("title"),
+            notes: get("notes"),
+            date: get("date"),
+            time: get("time"),
+            priority: get("priority"),
+            completed: old?.completed || false,
+            reminded: false,
+          };
+        if (!t.title || !validDate(t.date))
+          throw new Error("Escribe un pendiente y una fecha válidos.");
+        if (old) data.tasks = data.tasks.map((v) => (v.id === t.id ? t : v));
+        else data.tasks.push(t);
+        ui.agendaDate = t.date;
+        closeModal();
+        commit("Pendiente guardado en tu agenda.");
+        checkReminders();
+        break;
+      }
+      case "settings-form":
+        data.settings.theme = get("theme");
+        data.settings.displayName = get("displayName");
+        commit("Así se siente más tuyo.");
+        break;
+      case "profile-form": {
+        if (get("password") !== get("confirm"))
+          throw new Error("Las contraseñas no coinciden.");
+        await saveQueue;
+        if (auth.hasAccount) {
+          const check = new LocalAuth(localStorage);
+          await check.unlock(auth.username, get("currentPassword"));
+          check.lock();
+        }
+        await auth.create(get("username"), get("password"), data);
+        localStorage.removeItem(STORE);
+        localStorage.removeItem(LEGACY);
+        closeModal();
+        notify("Tu perfil está cifrado. Guarda un respaldo y tu contraseña.");
+        break;
+      }
+      case "login-form": {
+        const check = new LocalAuth(localStorage),
+          opened = validateState(
+            await check.unlock(get("username"), get("password")),
+          );
+        data = opened;
+        auth = check;
+        localStorage.removeItem(STORE);
+        localStorage.removeItem(LEGACY);
+        syncStock();
+        render();
+        checkReminders();
+        break;
+      }
+      case "restore-form": {
+        await saveQueue.catch(() => {});
+        const modal = ui.modal;
+        let opened,
+          nextAuth = auth;
+        if (modal.vault) {
+          const storage = {
+            getItem: () => null,
+            setItem: (k, v) => localStorage.setItem(k, v),
+          };
+          nextAuth = new LocalAuth(storage);
+          opened = validateState(
+            await nextAuth.unlock(
+              get("username"),
+              get("password"),
+              modal.vault,
+            ),
+          );
+          await nextAuth.save(opened);
+        } else {
+          if (isLocked())
+            throw new Error(
+              "Desbloquea tu perfil antes de restaurar un respaldo sin cifrar.",
+            );
+          opened = validateState(modal.value);
+          if (auth.hasAccount) await auth.save(opened);
+          else localStorage.setItem(STORE, JSON.stringify(opened));
+        }
+        data = opened;
+        auth = nextAuth;
+        recoveryRequired = false;
+        if (auth.hasAccount) {
+          localStorage.removeItem(STORE);
+          localStorage.removeItem(LEGACY);
+        } else {
+          localStorage.removeItem("foraneo-vault-v1");
+          localStorage.removeItem(LEGACY);
+        }
+        closeModal();
+        notify("Respaldo restaurado. Tus datos están listos.");
+        break;
+      }
+    }
+  } catch (error) {
+    formError(form, error);
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+});
 
-app.addEventListener('change',async event=>{const el=event.target;try{if(el.id==='photo-file'||el.id==='camera-file')await readImage(el.files?.[0]);if(el.id==='backup-file'&&el.files?.[0]){const file=el.files[0];if(file.size>24*1024*1024)throw new Error('El respaldo supera el límite de 24 MB.');const value=JSON.parse(await file.text());if(value.format==='foraneo-vault')openModal('restore',{vault:value});else openModal('restore',{value:validateState(value)});}if(el.id==='agenda-date'&&validDate(el.value)){ui.agendaDate=el.value;render();}if(el.id==='compare-product'){ui.price={productId:el.value};render();}if(el.dataset.task){const t=data.tasks.find(v=>v.id===el.dataset.task);if(t){t.completed=el.checked;t.reminded=el.checked;commit();}}}catch(error){const errorNode=$('.dialog .form-error');if(errorNode)errorNode.textContent=error.message;else notify(error.message||'No se pudo abrir ese archivo.','danger');}});
-document.addEventListener('keydown',event=>{if(!ui.modal)return;if(event.key==='Escape'){closeModal();return;}if(event.key==='Tab'){const focusable=[...document.querySelectorAll('.dialog button,.dialog a[href],.dialog input,.dialog textarea,.dialog select')].filter(el=>!el.disabled&&!el.hidden&&el.getClientRects().length);const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}});
-window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;});
-window.addEventListener('pagehide',stopCamera);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCamera();else checkReminders();});
-if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register(BASE+'sw.js',{scope:BASE}).catch(()=>{}));
-setInterval(checkReminders,30000);
-if(!isLocked()&&!recoveryRequired)syncStock();
+app.addEventListener("change", async (event) => {
+  const el = event.target;
+  try {
+    if (el.id === "photo-file" || el.id === "camera-file")
+      await readImage(el.files?.[0]);
+    if (el.id === "backup-file" && el.files?.[0]) {
+      const file = el.files[0];
+      if (file.size > 24 * 1024 * 1024)
+        throw new Error("El respaldo supera el límite de 24 MB.");
+      const value = JSON.parse(await file.text());
+      if (value.format === "foraneo-vault")
+        openModal("restore", { vault: value });
+      else openModal("restore", { value: validateState(value) });
+    }
+    if (el.id === "agenda-date" && validDate(el.value)) {
+      ui.agendaDate = el.value;
+      render();
+    }
+    if (el.id === "compare-product") {
+      ui.price = { productId: el.value };
+      render();
+    }
+    if (el.dataset.task) {
+      const t = data.tasks.find((v) => v.id === el.dataset.task);
+      if (t) {
+        t.completed = el.checked;
+        t.reminded = el.checked;
+        commit();
+      }
+    }
+  } catch (error) {
+    const errorNode = $(".dialog .form-error");
+    if (errorNode) errorNode.textContent = error.message;
+    else notify(error.message || "No se pudo abrir ese archivo.", "danger");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (!ui.modal) return;
+  if (event.key === "Escape") {
+    closeModal();
+    return;
+  }
+  if (event.key === "Tab") {
+    const focusable = [
+      ...document.querySelectorAll(
+        ".dialog button,.dialog a[href],.dialog input,.dialog textarea,.dialog select",
+      ),
+    ].filter((el) => !el.disabled && !el.hidden && el.getClientRects().length);
+    const first = focusable[0],
+      last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
+});
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+});
+window.addEventListener("pagehide", stopCamera);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopCamera();
+  else checkReminders();
+});
+if ("serviceWorker" in navigator)
+  window.addEventListener("load", () =>
+    navigator.serviceWorker
+      .register(BASE + "sw.js", { scope: BASE })
+      .catch(() => {}),
+  );
+setInterval(checkReminders, 30000);
+if (!isLocked() && !recoveryRequired) syncStock();
 render();

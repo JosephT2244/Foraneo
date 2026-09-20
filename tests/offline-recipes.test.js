@@ -4,7 +4,12 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import fixtures from './recipe-fixtures.json' with { type: 'json' };
-import { getLocalRecipes, recommendLocalRecipes, normalizeIngredient, ingredientMatches, missingIngredients, isRecipeAllowed } from '../src/offline-recipes.js';
+import { getLocalRecipes, primeLocalRecipes, recommendLocalRecipes, normalizeIngredient, ingredientMatches, missingIngredients, isRecipeAllowed } from '../src/offline-recipes.js';
+
+// The browser intentionally loads only a compact recipe index on demand.
+// Tests prime the complete local source so they can verify every full step.
+const completeCatalog = JSON.parse(readFileSync(new URL('../public/recipes/catalog.json', import.meta.url)));
+primeLocalRecipes(completeCatalog);
 
 test('the shared offline catalog is complete, original, quantified and preference-compatible', () => {
   const web = readFileSync(new URL('../public/recipes/catalog.json', import.meta.url));

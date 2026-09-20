@@ -73,7 +73,12 @@ void main() {
         await tester.tap(
           find.widgetWithText(NavigationDestination, destination),
         );
-        await tester.pumpAndSettle();
+        if (destination == 'Cocina') {
+          await tester.pump(const Duration(seconds: 1));
+          await tester.pump();
+        } else {
+          await tester.pumpAndSettle();
+        }
         expect(
           tester.takeException(),
           isNull,
@@ -132,7 +137,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await openApp(tester, state: emptyState());
       await tester.tap(find.widgetWithText(NavigationDestination, 'Cocina'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
       await tester.ensureVisible(find.text('Ver paso a paso').first);
       await tester.tap(find.text('Ver paso a paso').first);
       await tester.pumpAndSettle();
