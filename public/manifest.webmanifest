@@ -4,16 +4,24 @@
   "description": "Inventario, compras inteligentes, recetas y agenda del hogar con Foráneo.",
   "lang": "es-MX",
   "start_url": "./",
+  "id": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#fff9f2",
-  "theme_color": "#d97a56",
+  "background_color": "#f8f7f2",
+  "theme_color": "#0b3b2e",
+  "categories": ["lifestyle", "food", "productivity"],
   "icons": [
     {
-      "src": "icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

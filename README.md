@@ -1,92 +1,160 @@
-# Foráneo
+# Foráneo · 2.0
 
-Foráneo organiza la vida diaria desde una interfaz cálida: inventario con fotos, comparación de precios, lista de compras urgente, recetas con IA y agenda semanal.
+Tu hogar, a tu ritmo. Despensa, compras, cocina y agenda en español, con diseño
+adaptable, modo oscuro y datos locales.
 
-## Qué incluye
+**Web:** https://josepht2244.github.io/Foraneo/
 
-- Inventario por categorías: comida, higiene, cocina, baño, lavar, tecnología y hogar.
-- Fotografías cargadas desde el dispositivo y datos de contenido, cantidad y precio habitual.
-- Reglas de compra configuradas por costo habitual. Un precio fuera de margen se marca en rojo; una oportunidad se destaca para comprar.
-- Alertas de existencias: agotado pasa a Compra urgente y poca existencia pasa a Por comprar.
-- Cocina IA que pide recetas al servidor seguro, respeta las restricciones de huevo y arroz, y permite pasar faltantes a compras.
-- Agenda para hoy y la semana.
-- Web instalable como PWA y aplicación Flutter para Android, iOS, web, Windows, macOS y Linux.
+**Instalables:** https://github.com/JosephT2244/Foraneo/releases/latest
 
-## Abrir la versión web local
+## Qué puedes hacer
 
-1. Instala las dependencias:
+- Registrar productos con foto de galería o cámara móvil, presentación, precio,
+  existencias y umbral mínimo; editar, consumir, reponer y eliminar.
+- Separar compras urgentes (agotados) de próximas compras (pocas existencias).
+- Comparar precios normalizados por cantidad y unidad, no sólo por empaque.
+- Consultar **1,225 variantes de 54 recetas base originales**, con ingredientes
+  cuantificados, instrucciones detalladas y recomendaciones por despensa.
+- Agregar recetas propias, enviar ingredientes faltantes a compras y planear
+  desayuno, comida y cena para cada día.
+- Organizar pendientes en un calendario y plan semanal, completar tareas y abrir
+  un formulario de Google Calendar con el evento preparado.
+- Crear un perfil local con usuario y contraseña, cifrar sus datos y hacer
+  respaldos. También puedes usar modo invitado.
+- Elegir apariencia clara, oscura o del sistema y configurar avisos/widgets.
 
-    npm install
+## Cocina sin API ni modelo pesado
 
-2. Para usar todas las funciones locales, crea el archivo de entorno a partir del ejemplo y coloca tu propia clave:
+No se usa una API de IA, clave, suscripción ni servidor de recetas. Es un
+**recetario local con búsqueda y puntuación por ingredientes**, no IA generativa.
+Las variantes comparten técnicas base y cambian ingredientes de manera
+estructurada. No son 1,225 platos independientes revisados por un chef.
 
-    Copy-Item .env.example .env
+Se excluyen huevos revueltos y preparaciones similares; se admite huevo duro.
+El arroz se limita a preparaciones asiáticas. Revisa siempre etiquetas, alergias,
+estado de los alimentos y cocción. Las fotos son ilustrativas; no se inventa un
+video específico: un botón de búsqueda abre YouTube cuando hay conexión.
 
-3. Inicia la web y el servidor de recetas:
+El catálogo se distribuye con la aplicación. Las fotos decorativas y el logo
+también están incluidos; las fotos que tomas no se suben a un servicio.
+Consulta [atribuciones](public/photos/ATTRIBUTION.md).
 
-    npm run dev:all
+## Compatibilidad real
 
-Abre http://localhost:5173. Si sólo quieres probar la interfaz sin IA, usa:
+| Función | Web/PWA | Android APK | Windows |
+| --- | --- | --- | --- |
+| Despensa, compras, recetas, agenda y tema | Sí | Sí | Sí |
+| Cámara | Selector de cámara según navegador | Cámara del sistema | Galería/archivo |
+| Sin conexión | Después de la primera carga y caché | Desde la instalación | Desde la instalación |
+| Notificaciones del sistema | Con permiso; app abierta para detectar avisos | Avisos y alarmas locales persistentes | Avisos; app abierta para programados |
+| Widgets de pantalla de inicio | No; acceso directo PWA | Hogar, compras, agenda y cocina | No |
 
-    npm run dev
+En Android, los widgets se agregan manteniendo presionada la pantalla de inicio
+o desde Ajustes de Foráneo si el launcher permite fijarlos. Se actualizan al
+guardar cambios y muestran la última actualización. El sistema puede retrasar
+alarmas por batería/Doze. Forzar la detención de una app impide sus alarmas hasta
+que se vuelva a abrir. No se solicita permiso de alarmas exactas.
 
-## IA de recetas
+Las carpetas iOS/macOS/Linux conservan el proyecto Flutter, pero esta entrega
+distribuye Android y Windows. No se afirma que exista un instalable de iPhone
+ni widgets de iOS; necesitan desarrollo/firma y pruebas con herramientas Apple.
 
-La clave de OpenAI vive solamente en el servidor de Node. Nunca la pegues en el navegador, la app Flutter ni los secretos públicos de GitHub Pages.
+## Privacidad y cuentas
 
-El servicio escucha en http://localhost:8787/api/recipes y toma estas variables desde .env:
+El perfil es **local**, no una cuenta en la nube. La contraseña deriva una clave
+con PBKDF2 y los datos se cifran con AES-GCM; no se guarda la contraseña. No hay
+recuperación por correo ni sincronización entre dispositivos. Guarda un respaldo
+antes de borrar datos del navegador o desinstalar.
 
-    OPENAI_API_KEY=tu_clave
-    OPENAI_MODEL=gpt-5.6-luna
-    ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+El modo invitado y los respaldos sin cifrar contienen datos legibles. Los textos
+de notificaciones y widgets se comparten con el sistema operativo cuando se
+habilitan y quedan fuera del cifrado del perfil. No publiques tus respaldos.
+El código no contiene analytics ni claves privadas. Enlaces a Calendar, YouTube
+o GitHub sólo requieren internet cuando eliges abrir esos servicios.
 
-Para producción, despliega la carpeta server en un host de Node con HTTPS y configura allí las mismas variables. Después añade en GitHub una variable de Actions llamada RECIPES_API_URL con la URL HTTPS terminada en /api/recipes; el workflow la incorporará al siguiente build estático. La página continuará funcionando sin esa variable, pero mostrará recetas locales de respaldo en vez de usar la IA.
+Google Calendar recibe un **evento preparado para que lo guardes**: no hay
+OAuth, importación de tus calendarios ni sincronización bidireccional. Los datos
+de cada versión permanecen en su propio dispositivo/navegador.
 
-## Aplicación Flutter
+## Desarrollo web
 
-La versión nativa está en foraneo_flutter. Instálala y ejecútala así:
+Requiere Node.js 22 o superior.
 
-    cd foraneo_flutter
-    flutter pub get
-    flutter run
+```powershell
+npm ci
+npm run dev
+```
 
-Para conectar recetas reales, usa una URL HTTPS del servidor:
+Abre http://localhost:5173. No necesitas `.env`, servidor API ni claves.
 
-    flutter run --dart-define=RECIPES_API_URL=https://tu-servidor.example/api/recipes
+```powershell
+npm test
+npm run build
+# Para reproducir la ruta de GitHub Pages:
+$env:VITE_BASE_PATH = '/Foraneo/'
+npm run build
+```
 
-Para un emulador Android local, usa http://10.0.2.2:8787/api/recipes. En un teléfono físico usa la IP LAN de la computadora o un backend HTTPS.
+`npm run recipes:generate` regenera el catálogo compartido. Los JSON generados se
+versionan. `scripts/prepare-assets.mjs` es una utilidad opcional del mantenedor
+para descargar las fotos con licencia; la app no la ejecuta ni necesita hacerlo.
 
-## Pruebas y build
+## Flutter y distribución
 
-Web:
+Verificado con Flutter 3.47.4/Dart 3.13.3, Android SDK/JDK de Android
+Studio y Visual Studio con Desarrollo para escritorio en C++ para Windows.
 
-    npm test
-    npm run build
+```powershell
+cd foraneo_flutter
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
 
-Flutter:
+Desde la raíz, `scripts/create-signing-key.ps1` crea una llave Android únicamente
+si todavía no existe. Conserva privadamente `foraneo_flutter/android/key.properties`
+y `foraneo_flutter/android/foraneo-release.jks`: **no se suben a GitHub**. Todas las
+actualizaciones del APK deben usar esa misma llave; nunca la regeneres a ciegas.
 
-    cd foraneo_flutter
-    flutter analyze
-    flutter test
-    flutter build web
+```powershell
+cd foraneo_flutter
+flutter build apk --release
+flutter build windows --release
+```
 
-## GitHub Pages
+`scripts/package-release.ps1` requiere Inno Setup y empaqueta los builds en
+`artifacts/`: APK, carpeta portable con DLL y datos, ZIP e instalador
+`foraneo.exe`. Si falta Inno Setup, se detiene sin modificar los instalables
+anteriores. No copies sólo el pequeño ejecutable Flutter: necesita su carpeta.
+El instalador no tiene certificado comercial Authenticode; Windows puede mostrar
+editor desconocido. El APK sí está firmado con la llave de publicación del autor.
 
-El repositorio incluye el workflow .github/workflows/deploy-pages.yml. Al enviar la rama main, publica la web estática en:
+## Publicación
 
-https://josepht2244.github.io/Foraneo/
+`.github/workflows/deploy-pages.yml` ejecuta pruebas y construye/publica `dist/`
+cuando se envía `main`. La fuente de GitHub Pages debe ser **GitHub Actions**.
+No se despliega Flutter web encima de la web Vite: son dos frontends del proyecto.
 
-En Settings > Pages del repositorio, selecciona GitHub Actions como fuente si GitHub no lo activa automáticamente. El workflow no expone claves y no puede alojar el servidor de IA: GitHub Pages sólo sirve archivos estáticos.
+La evidencia de pruebas y las limitaciones verificadas se documentan en
+[Verificación de la entrega](docs/VERIFICACION.md).
 
 ## Márgenes de precio
 
-| Precio habitual | Oportunidad | Máximo autorizado |
-| --- | ---: | ---: |
-| Hasta $40 | -15% | +10% |
-| De $41 a $100 | -15% | +8% |
-| De $101 a $200 | -15% | +4% |
-| De $201 a $500 | -10% | +3% |
-| De $501 a $1,000 | -10% | +2% |
-| Más de $1,000 | -10% | +1% |
+El tramo se elige por el precio habitual de la presentación de referencia.
 
-El intervalo entre oportunidad y máximo se autoriza en verde. Si supera el máximo se rechaza en rojo.
+| Referencia habitual | Oferta especial desde | Rechazar desde |
+| --- | ---: | ---: |
+| Hasta $40 | −15% | +10% |
+| Más de $40 a $100 | −15% | +8% |
+| Más de $100 a $200 | −15% | +4% |
+| Más de $200 a $500 | −10% | +3% |
+| Más de $500 a $1,000 | −10% | +2% |
+| Más de $1,000 | −10% | +1% |
+
+Los límites son inclusivos: exactamente +10% en el primer tramo ya es rojo;
+exactamente −15% ya es oferta. El intervalo restante se autoriza en verde. El
+intervalo no especificado originalmente ($1,000–$2,000) usa el margen conservador
+de +1%, igual que el tramo superior.
+
+<small>by Joseph Ubaldo Trejo Hernandez</small>

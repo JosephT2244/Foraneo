@@ -1,0 +1,53 @@
+{
+  "normalization": [
+    ["250 g de pasta corta seca sin huevo", "pasta"],
+    ["Pasta fusilli", "pasta"],
+    ["200 g de JITOMATES", "tomate"],
+    ["Bebida vegetal de avena sin azúcar, 1 L", "leche de avena"],
+    ["250 g de champiñones frescos", "champinon"],
+    ["40 g de pasta de tomate", "concentrado de tomate"],
+    ["20 ml de salsa de soya", "salsa de soya"],
+    ["20 g de pepitas", "semilla de calabaza"],
+    ["4 Huevos medianos con cáscara", "huevo"],
+    ["200 ml de agua para la salsa", "agua"],
+    ["", ""]
+  ],
+  "matching": [
+    ["Pasta fusilli", "160 g de pasta corta", true],
+    ["tomate", "Jitomate saladet", true],
+    ["calabacita", "Calabacín", true],
+    ["champinon", "Champiñones frescos", true],
+    ["yogur natural", "Yogur griego natural", true],
+    ["sal", "salsa de soya", false],
+    ["sal", "salsa", false],
+    ["pasta", "pasta de tomate", false],
+    ["avena", "leche de avena", false],
+    ["leche de coco", "leche de avena", false],
+    ["tomate", "concentrado de tomate", false],
+    ["", "", false]
+  ],
+  "restrictions": [
+    [{"title":"Huevos revueltos","ingredients":["2 huevos"],"steps":["Bate los huevos"]}, false],
+    [{"title":"Omelette de verduras","ingredients":["2 huevos"],"steps":["Cocina en sartén"]}, false],
+    [{"title":"Huevos estrellados","ingredients":["2 huevos"],"steps":["Fríe en sartén"]}, false],
+    [{"title":"Ensalada de huevo duro","ingredients":["2 huevos"],"steps":["Hierve los huevos hasta que clara y yema estén firmes"]}, true],
+    [{"title":"Arroz rojo tradicional","ingredients":["arroz","tomate"],"steps":["Cuece en caldo"]}, false],
+    [{"title":"Arroz chino al wok","ingredients":["arroz","salsa de soya"],"steps":["Saltea las verduras y el arroz"]}, true],
+    [{"title":"Arroz chino al wok","ingredients":["arroz","2 huevos"],"steps":["Bate los huevos y cocina"]}, false],
+    [{"title":"Pasta casera","ingredients":["160 g de pasta sin huevo"],"steps":["Cuece la pasta"]}, true],
+    [{"title":"Panqueques","ingredients":["2 huevos","harina"],"steps":["Mezcla todo y vierte en sartén"]}, false],
+    [{"title":"Ensalada mixta","ingredients":["1 huevo duro","1 huevo para empanizar"],"steps":["Hierve un huevo. Bate el otro huevo y fríe."]}, false],
+    [{"title":"Ensalada con dos huevos","ingredients":["1 huevo duro","1 huevo"],"steps":["Hierve uno y usa el otro en la cobertura."]}, false],
+    [{"title":"Ensalada con huevo hervido","ingredients":["2 huevos"],"steps":["Hierve los huevos durante 12 minutos hasta que clara y yema estén firmes."]}, true],
+    [{"title":"Huevo con cobertura","ingredients":["2 huevos"],"steps":["Hierve un huevo. Bate el otro huevo para la cobertura."]}, false],
+    [{"title":"Ensalada con aderezo","ingredients":["2 huevos duros","1000 ml de agua para cocer los huevos","20 ml de aceite"],"steps":["Bate el aderezo. Sirve con huevos duros."]}, true]
+  ],
+  "queries": [
+    {"query":"pasta pollo","pantry":[],"limit":4,"ids":["local-pasta-tomate-pollo-calabacita","local-pasta-pesto-pollo-calabacita","local-pasta-limon-pollo-calabacita","local-pasta-yogur-pollo-calabacita"]},
+    {"query":"avena plátano","pantry":[],"limit":3,"ids":["local-avena-caliente-platano","local-avena-nocturna-platano","local-yogur-crujiente-platano"]},
+    {"query":"nebulosaxyz","pantry":[],"limit":4,"ids":[]},
+    {"query":"pasta sin pollo","pantry":[],"limit":3,"ids":["local-pasta-tomate-tofu-calabacita","local-pasta-pesto-tofu-calabacita","local-pasta-limon-tofu-calabacita"]},
+    {"query":"sin pollo ni tofu con pasta","pantry":[],"limit":3,"ids":["local-pasta-tomate-garbanzos-calabacita","local-pasta-pesto-garbanzos-calabacita","local-pasta-limon-garbanzos-calabacita"]},
+    {"query":"pasta sin pollo, tofu y yogur natural","pantry":[],"limit":3,"ids":["local-pasta-tomate-garbanzos-calabacita","local-pasta-pesto-garbanzos-calabacita","local-pasta-limon-garbanzos-calabacita"]}
+  ]
+}

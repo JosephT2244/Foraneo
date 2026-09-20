@@ -1,20 +1,15 @@
 {
   "name": "foraneo",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "server": "node server/index.js",
-    "dev:all": "node scripts/dev-all.js",
+    "dev:all": "vite --host 0.0.0.0",
+    "recipes:generate": "node scripts/generate-recipes.mjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test"
-  },
-  "dependencies": {
-    "dotenv": "^16.6.1",
-    "express": "^5.1.0",
-    "openai": "^6.16.0"
   },
   "devDependencies": {
     "vite": "^7.0.0"

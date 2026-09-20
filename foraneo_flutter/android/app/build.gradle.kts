@@ -1,9 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val signingProperties = Properties()
+val signingFile = rootProject.file("key.properties")
+if (signingFile.exists()) signingFile.inputStream().use { signingProperties.load(it) }
 
 android {
     namespace = "com.josepht2244.foraneo"
@@ -30,12 +36,27 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("foraneoRelease") {
+            if (signingFile.exists()) {
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+                storeFile = rootProject.file(signingProperties.getProperty("storeFile"))
+                storePassword = signingProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("foraneoRelease")
         }
+    }
+}
+
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.name.contains("Release", ignoreCase = true) } && !signingFile.exists()) {
+        throw GradleException("Falta android/key.properties. Ejecuta scripts/create-signing-key.ps1 desde la raíz; nunca publiques la llave privada.")
     }
 }
 

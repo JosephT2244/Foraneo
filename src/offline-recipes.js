@@ -1,0 +1,166 @@
+import catalog from '../public/recipes/catalog.json' with { type: 'json' };
+
+// A lightweight, deterministic local search index — not a language model.
+// Keep the equivalent Dart service and the shared fixtures in sync.
+const aliases = [
+  ['aceite de oliva', ['aceite de oliva']],
+  ['leche de avena', ['leche de avena', 'bebida de avena', 'bebida vegetal de avena']],
+  ['leche de coco', ['leche de coco', 'bebida de coco']],
+  ['crema de cacahuate', ['crema de cacahuate', 'mantequilla de cacahuate', 'crema de mani']],
+  ['concentrado de tomate', ['concentrado de tomate', 'pasta de tomate', 'pure concentrado de tomate']],
+  ['caldo de verduras', ['caldo de verduras', 'caldo vegetal']],
+  ['salsa de soya', ['salsa de soya', 'salsa de soja', 'salsa soya', 'salsa soja', 'tamari']],
+  ['queso parmesano', ['queso parmesano', 'parmesano', 'parmigiano']],
+  ['semilla de calabaza', ['semillas de calabaza', 'semilla de calabaza', 'pepitas']],
+  ['tortilla de harina', ['tortillas de harina', 'tortilla de harina']],
+  ['tortilla de maiz', ['tortillas de maiz', 'tortilla de maiz']],
+  ['tostada de maiz', ['tostadas de maiz', 'tostada de maiz', 'tostadas']],
+  ['fecula de maiz', ['fecula de maiz', 'almidon de maiz', 'maicena']],
+  ['frijol blanco', ['frijoles blancos', 'frijol blanco', 'alubias', 'alubia']],
+  ['yogur natural', ['yogur natural', 'yogurt natural', 'yoghurt natural', 'yogur griego natural']],
+  ['pan integral', ['pan integral']],
+  ['pasta', ['pasta', 'fusilli', 'espagueti', 'espaguetis', 'spaghetti', 'macarrones', 'penne']],
+  ['fideo', ['fideos', 'fideo', 'noodles']], ['tomate', ['tomates', 'tomate', 'jitomates', 'jitomate']],
+  ['calabacita', ['calabacitas', 'calabacita', 'calabacin', 'calabacines', 'zucchini']],
+  ['brocoli', ['brocoli', 'brocolis']], ['champiñon', ['champinones', 'champinon']],
+  ['pimiento', ['pimientos', 'pimiento', 'pimenton rojo fresco']],
+  ['zanahoria', ['zanahorias', 'zanahoria']], ['garbanzo', ['garbanzos', 'garbanzo']],
+  ['lenteja', ['lentejas', 'lenteja']], ['pollo', ['pollo', 'pechuga de pollo']],
+  ['tofu', ['tofu']], ['arroz', ['arroz']], ['quinoa', ['quinoa', 'quinua']],
+  ['cuscus', ['cuscus', 'couscous']], ['avena', ['avena']], ['huevo', ['huevos', 'huevo']],
+  ['papa', ['papas', 'papa', 'patatas', 'patata']], ['cebollin', ['cebollin', 'cebolleta']],
+  ['cebolla', ['cebollas', 'cebolla']], ['ajo', ['ajos', 'ajo']],
+  ['aguacate', ['aguacates', 'aguacate', 'palta']], ['lechuga', ['lechugas', 'lechuga']],
+  ['espinaca', ['espinacas', 'espinaca']], ['limon', ['limones', 'limon']],
+  ['platano', ['platanos', 'platano', 'banana', 'banano']], ['manzana', ['manzanas', 'manzana']],
+  ['fresa', ['fresas', 'fresa', 'frutillas', 'frutilla']], ['mango', ['mangos', 'mango']],
+  ['nuez', ['nueces', 'nuez']], ['chia', ['chia']], ['canela', ['canela']],
+  ['albahaca', ['albahaca']], ['perejil', ['perejil']], ['cilantro', ['cilantro']],
+  ['oregano', ['oregano']], ['comino', ['comino']], ['pimenton', ['pimenton', 'paprika']],
+  ['chipotle', ['chipotle']], ['jengibre', ['jengibre']], ['curry', ['curry']],
+  ['tahini', ['tahini', 'tahin', 'pasta de ajonjoli']], ['ajonjoli', ['ajonjoli', 'sesamo']],
+  ['miel', ['miel']], ['sal', ['sal']], ['agua', ['agua']],
+];
+const fold = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const phraseAliases = aliases.flatMap(([key, words]) => words.map(word => [fold(word), fold(key)]))
+  .sort((a, b) => b[0].length - a[0].length);
+const stopWords = new Set('a al algo con como cocinar cocina compra de del el en la las lo los me mi mis para por que quiero receta recetas recomienda recomiendame rica rico ricas ricos tengo una unas uno unos un y sin g gr gramos kg kilogramo kilogramos ml l litro litros taza tazas cucharada cucharadas cucharadita cucharaditas pieza piezas paquete paquetes fresco fresca frescos frescas natural naturales integral mediano mediana medianos medianas aproximadamente sin azucar de forma'.split(' '));
+const canonicalWord = value => ({ cenar: 'cena', desayunar: 'desayuno', almuerzo: 'comida', italiana: 'mediterranea', italiano: 'mediterranea', asiatico: 'asiatica', chino: 'china', oriental: 'asiatica' })[value] || value;
+
+export function normalizeIngredient(value) {
+  const name = typeof value === 'object' && value !== null ? value.name : value;
+  const text = fold(name).replace(/\b(?:sin|no contiene) huevos?\b/g, '');
+  if (!text) return '';
+  // Longest phrase wins: oat milk is not oats; tomato paste is not pasta.
+  for (const [phrase, key] of phraseAliases) if (` ${text} `.includes(` ${phrase} `)) return key;
+  return text.split(' ').filter(word => word && !/^\d+$/.test(word) && !stopWords.has(word)).join(' ');
+}
+
+export function ingredientMatches(ingredient, product) {
+  const a = normalizeIngredient(ingredient), b = normalizeIngredient(product);
+  return Boolean(a && b && a === b);
+}
+
+function availablePantry(pantry) {
+  return (Array.isArray(pantry) ? pantry : []).filter(product => {
+    if (typeof product === 'string') return product.trim();
+    return product && typeof product.name === 'string' && Number(product.stock ?? 1) > 0 && (!product.category || ['comida', 'alimentos', 'food'].includes(fold(product.category)));
+  }).map(normalizeIngredient).filter(Boolean);
+}
+
+export function missingIngredients(recipe, pantry = []) {
+  const available = new Set(availablePantry(pantry));
+  available.add('agua'); // Potable cooking water is not an automatic grocery item.
+  const seen = new Set();
+  return (Array.isArray(recipe?.ingredients) ? recipe.ingredients : []).filter((ingredient, index) => {
+    const key = normalizeIngredient(recipe.ingredientKeys?.[index] || ingredient);
+    if (!key || available.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function recipeRestrictionReason(recipe) {
+  if (!recipe || typeof recipe !== 'object') return 'La receta no tiene un formato válido.';
+  const list = value => Array.isArray(value) ? value.join(' ') : String(value ?? '');
+  const text = fold(`${recipe.title ?? ''} ${recipe.description ?? ''} ${list(recipe.ingredients)} ${list(recipe.steps)} ${recipe.cuisine ?? ''} ${recipe.tag ?? ''}`);
+  if (/\b(?:omelet\w*|frittata\w*|scrambl\w*)\b|\bhuevos? (?:revuelt\w*|frit\w*|estrellad\w*|pochad\w*|rancher\w*|batid\w*|a la mexicana|para (?:empanizar|rebozar|capear))|\b(?:tortilla|tortillas) (?:de huevo|espanola|francesa)|\b(?:bate|batir|baten|batiendo|batimos)\s+(?:(?:muy|bien|ligeramente|energicamente|suavemente|el|los|un|unos|otro|otros|restante|restantes|dos|tres|\d+)\s+){0,5}huevos?\b|\b(?:revuelve|remueve) (?:los )?huevos?\b/.test(text)) return 'Tus preferencias excluyen huevo revuelto, frito y preparaciones similares; solo se admite huevo hervido.';
+  const eggIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map(ingredient => fold(ingredient).replace(/\bsin huevos?\b/g, '')).filter(ingredient => /\bhuevos?\b/.test(ingredient) && !/\bagua\b.*\b(?:cocer|hervir|enfriar)\b/.test(ingredient));
+  const explicitlyBoiled = ingredient => /\bhuevos? (?:duros?|cocidos?|hervidos?)\b/.test(ingredient);
+  if (eggIngredients.some(explicitlyBoiled) && eggIngredients.some(ingredient => !explicitlyBoiled(ingredient))) return 'Hay huevo hervido y otra preparación de huevo sin aclarar; indica que todo el huevo sea hervido.';
+  const ingredients = fold(list(recipe.ingredients)).replace(/\bsin huevos?\b/g, '');
+  if (/\bhuevos?\b/.test(ingredients) && !/\bhuevos? (?:duros?|cocidos?|hervidos?)\b|\b(?:hierve|hervir|cuece|cocer) (?:los )?huevos?\b/.test(text)) return 'Esta receta usa huevo y no indica que sea únicamente hervido.';
+  if (/\barroz\b/.test(text) && !/\b(?:chin[oa]|asiatic[oa]|oriental|japones\w*|corean\w*|sushi|onigiri|wok|teriyaki|cantones|thai|tailandes\w*|bibimbap)\b/.test(text)) return 'Tus preferencias admiten arroz solo en preparaciones asiáticas, no arroz tradicional.';
+  return null;
+}
+
+export const isRecipeAllowed = recipe => recipeRestrictionReason(recipe) === null;
+
+let localRecipes;
+let searchIndex;
+export function getLocalRecipes() {
+  localRecipes ??= catalog.filter(isRecipeAllowed);
+  return localRecipes.slice(); // Consumers can sort without reordering the index.
+}
+
+function queryWords(query) {
+  let text = ` ${fold(query)} `;
+  for (const [phrase, key] of phraseAliases) text = text.split(` ${phrase} `).join(` ${key} `);
+  return [...new Set(text.trim().split(' ').filter(word => word && !stopWords.has(word) && !/^\d+$/.test(word)).map(canonicalWord))];
+}
+
+// Support explicit ingredient exclusions without pretending to understand
+// arbitrary dietary/medical requests. Keep this parser aligned with Dart.
+function parseRecipeQuery(query) {
+  const excludedIngredients = new Set();
+  const text = fold(String(query).replace(/[,;]/g, ' ni '));
+  const positive = text.replace(/\b(?:sin|no quiero|evita|evitar|excluye)\s+(.+?)(?=\s+(?:con|para|sin|no quiero|evita|evitar|excluye)\b|$)/g, (_, clause) => {
+    for (const ingredient of clause.split(/\s+(?:ni|y|o)\s+/)) {
+      const key = normalizeIngredient(ingredient);
+      if (key) excludedIngredients.add(key);
+    }
+    return ' ';
+  });
+  return { tokens: queryWords(positive), excludedIngredients };
+}
+
+function indexFor(recipe, index) {
+  const keys = [...new Set((recipe.ingredientKeys || recipe.ingredients || []).map(normalizeIngredient).filter(key => key && key !== 'agua'))];
+  const searchable = new Set(queryWords(`${recipe.title} ${recipe.category} ${recipe.cuisine} ${recipe.tag} ${keys.join(' ')}`));
+  return { recipe, index, keys, searchable };
+}
+
+export function recommendLocalRecipes({ query = '', pantry = [], limit = 12, offset = 0, exclude = [] } = {}) {
+  searchIndex ??= getLocalRecipes().map(indexFor);
+  const { tokens: queryTokens, excludedIngredients } = parseRecipeQuery(query);
+  // A user-entered unknown search never silently returns unrelated recipes.
+  if (String(query).trim() && queryTokens.length === 0 && excludedIngredients.size === 0) return [];
+  const available = new Set(availablePantry(pantry));
+  const excluded = new Set(Array.isArray(exclude) ? exclude : []);
+  const ranked = searchIndex.filter(entry => !excluded.has(entry.recipe.id) && !excluded.has(entry.recipe.title) && !entry.keys.some(key => excludedIngredients.has(key))).map(entry => {
+    const hits = queryTokens.filter(word => entry.searchable.has(word)).length;
+    const owned = entry.keys.filter(key => available.has(key)).length;
+    const score = hits * 10000 + Math.round(owned / Math.max(entry.keys.length, 1) * 1000) + owned * 10;
+    return { ...entry, hits, score };
+  }).filter(entry => !queryTokens.length || entry.hits > 0).sort((a, b) => b.score - a.score || a.index - b.index);
+  // Round-robin the equally relevant bases so the first page is not 12 near-duplicates.
+  const groups = new Map();
+  for (const entry of ranked) {
+    const key = `${entry.hits}:${entry.recipe.baseId || entry.recipe.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  const diversified = [];
+  const tiers = [...new Set(ranked.map(entry => entry.hits))].sort((a, b) => b - a);
+  for (const tier of tiers) {
+    const queues = [...groups.values()].filter(group => group[0].hits === tier);
+    for (let round = 0; queues.some(group => group.length > round); round++) {
+      const candidates = queues.filter(group => group.length > round).map(group => group[round]);
+      candidates.sort((a, b) => b.score - a.score || a.index - b.index);
+      diversified.push(...candidates.map(entry => entry.recipe));
+    }
+  }
+  const start = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
+  const count = Number.isFinite(Number(limit)) ? Math.max(0, Math.min(200, Math.floor(Number(limit)))) : 12;
+  return diversified.slice(start, start + count);
+}

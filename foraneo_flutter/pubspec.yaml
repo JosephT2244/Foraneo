@@ -1,5 +1,5 @@
 name: foraneo
-description: "A new Flutter project."
+description: "Foráneo: despensa, compras, cocina y agenda sin conexión."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: ^3.10.7
@@ -31,7 +31,12 @@ dependencies:
   flutter:
     sdk: flutter
 
-  http: ^1.5.0
+  flutter_localizations:
+    sdk: flutter
+  image_picker: ^1.2.1
+  cryptography: ^2.9.0
+  cryptography_flutter: ^2.3.4
+  local_notifier: ^0.1.6
   shared_preferences: ^2.5.3
   file_picker: ^10.3.3
   url_launcher: ^6.3.2
@@ -41,6 +46,8 @@ dependencies:
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 
@@ -50,6 +57,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -61,6 +69,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/logo.png
+    - assets/photos/
+    - assets/recipes/catalog.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -92,3 +104,22 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/logo.png
+  min_sdk_android: 24
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: assets/logo.png
+    background_color: '#f7f7ef'
+    theme_color: '#0b3a31'
+  windows:
+    generate: true
+    image_path: assets/logo.png
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: assets/logo.png

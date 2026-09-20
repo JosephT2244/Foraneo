@@ -27,11 +27,12 @@ jobs:
           cache: npm
       - name: Instalar dependencias
         run: npm ci
+      - name: Verificar reglas, recetas y seguridad local
+        run: npm test
       - name: Construir la web
         run: npm run build
         env:
           VITE_BASE_PATH: /Foraneo/
-          VITE_RECIPES_API_URL: ${{ vars.RECIPES_API_URL }}
       - name: Subir sitio estático
         uses: actions/upload-pages-artifact@v3
         with:
@@ -40,6 +41,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
     steps:

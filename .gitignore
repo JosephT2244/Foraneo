@@ -8,3 +8,9 @@ foraneo_flutter/.idea/
 foraneo_flutter/.flutter-plugins
 foraneo_flutter/.flutter-plugins-dependencies
 foraneo_flutter/android/build/
+.tools/
+artifacts/
+foraneo_flutter/android/key.properties
+foraneo_flutter/android/*.jks
+foraneo_flutter/android/*.keystore
+*.log

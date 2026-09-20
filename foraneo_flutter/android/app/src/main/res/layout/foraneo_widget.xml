@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="16dp" android:background="@drawable/widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+        <ImageView android:layout_width="32dp" android:layout_height="32dp" android:src="@mipmap/ic_launcher" android:contentDescription="Foráneo" />
+        <TextView android:id="@+id/widget_title" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:text="Foráneo · Mi hogar" android:textColor="#FFF9EE" android:textSize="17sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_updated" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abre Foráneo para comenzar" android:textColor="#B7D3C1" android:textSize="10sp" android:layout_marginTop="6dp" />
+    <LinearLayout android:id="@+id/shopping_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="9dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="COMPRAS" android:textColor="#F1C974" android:textSize="10sp" android:textStyle="bold" />
+        <TextView android:id="@+id/widget_urgent" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sin urgentes" android:textColor="#FFB3A5" android:textSize="13sp" android:maxLines="2" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_shopping" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Tu lista, siempre a mano" android:textColor="#FFF9EE" android:textSize="13sp" android:maxLines="2" android:ellipsize="end" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/agenda_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="9dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="PENDIENTES" android:textColor="#A6DDB2" android:textSize="10sp" android:textStyle="bold" />
+        <TextView android:id="@+id/widget_tasks" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Un día a la vez" android:textColor="#FFF9EE" android:textSize="13sp" android:maxLines="2" android:ellipsize="end" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/kitchen_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="9dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="MENÚ DEL DÍA" android:textColor="#A6DDB2" android:textSize="10sp" android:textStyle="bold" />
+        <TextView android:id="@+id/widget_meal" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Hoy se cocina en casa" android:textColor="#FFF9EE" android:textSize="13sp" android:maxLines="3" android:ellipsize="end" />
+    </LinearLayout>
+</LinearLayout>

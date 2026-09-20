@@ -62,7 +62,11 @@ export function evaluatePrice(usualPrice, proposedPrice) {
   const tier = getPriceTier(usual);
   const changePercent = ((proposed - usual) / usual) * 100;
 
-  if (changePercent <= -tier.discountPercent) {
+  // Absorb only binary floating-point noise at the inclusive boundaries.
+  // Keep this far below even a fraction of a cent at supported price ranges.
+  const boundaryTolerance = Number.EPSILON * 100 * 8;
+
+  if (changePercent <= -tier.discountPercent + boundaryTolerance) {
     return {
       decision: 'deal',
       label: '¡Cómpralo!',
@@ -72,7 +76,7 @@ export function evaluatePrice(usualPrice, proposedPrice) {
     };
   }
 
-  if (changePercent >= tier.increasePercent) {
+  if (changePercent + boundaryTolerance >= tier.increasePercent) {
     return {
       decision: 'avoid',
       label: 'Mejor no lo compres',

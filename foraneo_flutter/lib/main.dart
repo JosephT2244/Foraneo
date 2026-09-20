@@ -1,1533 +1,3202 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'auth.dart';
+import 'editors.dart';
+import 'models.dart';
+import 'services/local_vault.dart';
+import 'services/native_services.dart';
+import 'services/offline_recipes.dart';
+export 'models.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ForaneoApp());
 }
 
-class ForaneoApp extends StatelessWidget {
+class ForaneoApp extends StatefulWidget {
   const ForaneoApp({super.key});
-
   @override
-  Widget build(BuildContext context) {
+  State<ForaneoApp> createState() => _ForaneoAppState();
+}
+
+class _ForaneoAppState extends State<ForaneoApp> {
+  ThemeMode mode = ThemeMode.system;
+  ThemeData theme(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
     final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xffbd5d38),
-      brightness: Brightness.light,
+      seedColor: const Color(0xff0b493b),
+      brightness: brightness,
     );
-    return MaterialApp(
-      title: 'Foráneo',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: scheme,
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xfffff9f4),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xfffff9f4),
-          foregroundColor: Color(0xff3b2b25),
-          elevation: 0,
+    return ThemeData(
+      useMaterial3: true,
+      brightness: brightness,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: dark
+          ? const Color(0xff111e1a)
+          : const Color(0xfff7f7ef),
+      appBarTheme: const AppBarTheme(
+        centerTitle: false,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      cardTheme: CardThemeData(
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .55)),
         ),
       ),
-      home: const ForaneoHome(),
-    );
-  }
-}
-
-enum StockState { enough, low, empty }
-
-class AppProduct {
-  AppProduct({
-    required this.id,
-    required this.name,
-    required this.description,
-    required this.category,
-    required this.unit,
-    required this.stock,
-    required this.lowAt,
-    required this.referencePrice,
-    this.photo,
-  });
-
-  final String id;
-  final String name;
-  final String description;
-  final String category;
-  final String unit;
-  int stock;
-  final int lowAt;
-  final double referencePrice;
-  final Uint8List? photo;
-
-  StockState get stockState {
-    if (stock <= 0) return StockState.empty;
-    if (stock <= lowAt) return StockState.low;
-    return StockState.enough;
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'description': description,
-      'category': category,
-      'unit': unit,
-      'stock': stock,
-      'lowAt': lowAt,
-      'referencePrice': referencePrice,
-      'photo': photo == null ? null : base64Encode(photo!),
-    };
-  }
-
-  factory AppProduct.fromJson(Map<String, dynamic> json) {
-    Uint8List? bytes;
-    final photo = json['photo'];
-    if (photo is String && photo.isNotEmpty) {
-      try {
-        bytes = base64Decode(photo);
-      } catch (_) {
-        bytes = null;
-      }
-    }
-    return AppProduct(
-      id: json['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString(),
-      name: json['name']?.toString() ?? 'Producto',
-      description: json['description']?.toString() ?? '',
-      category: json['category']?.toString() ?? 'Hogar',
-      unit: json['unit']?.toString() ?? 'pza',
-      stock: (json['stock'] as num?)?.round() ?? 0,
-      lowAt: (json['lowAt'] as num?)?.round() ?? 1,
-      referencePrice: (json['referencePrice'] as num?)?.toDouble() ?? 0,
-      photo: bytes,
-    );
-  }
-}
-
-class TodoEntry {
-  TodoEntry({
-    required this.id,
-    required this.title,
-    required this.when,
-    this.done = false,
-  });
-
-  final String id;
-  final String title;
-  final String when;
-  bool done;
-
-  Map<String, dynamic> toJson() {
-    return {'id': id, 'title': title, 'when': when, 'done': done};
-  }
-
-  factory TodoEntry.fromJson(Map<String, dynamic> json) {
-    return TodoEntry(
-      id: json['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString(),
-      title: json['title']?.toString() ?? 'Pendiente',
-      when: json['when']?.toString() ?? 'Hoy',
-      done: json['done'] == true,
-    );
-  }
-}
-
-class Recipe {
-  Recipe({
-    required this.title,
-    required this.description,
-    required this.ingredients,
-    required this.steps,
-    required this.minutes,
-    required this.servings,
-    required this.tag,
-    this.videoUrl = '',
-  });
-
-  final String title;
-  final String description;
-  final List<String> ingredients;
-  final List<String> steps;
-  final String minutes;
-  final String servings;
-  final String tag;
-  final String videoUrl;
-
-  Map<String, dynamic> toJson() {
-    return {
-      'title': title,
-      'description': description,
-      'ingredients': ingredients,
-      'steps': steps,
-      'time': minutes,
-      'servings': servings,
-      'tag': tag,
-      'videoUrl': videoUrl,
-    };
-  }
-
-  factory Recipe.fromJson(Map<String, dynamic> json) {
-    List<String> asStrings(Object? value) {
-      if (value is! List) return const [];
-      return value.map((item) => item.toString()).where((item) => item.isNotEmpty).toList();
-    }
-
-    return Recipe(
-      title: json['title']?.toString() ?? 'Receta de Foráneo',
-      description: json['description']?.toString() ?? '',
-      ingredients: asStrings(json['ingredients']),
-      steps: asStrings(json['steps']),
-      minutes: json['time']?.toString() ?? '25 min',
-      servings: json['servings']?.toString() ?? '2 porciones',
-      tag: json['tag']?.toString() ?? 'Casera',
-      videoUrl: json['videoUrl']?.toString() ?? '',
-    );
-  }
-}
-
-class PriceDecision {
-  const PriceDecision({
-    required this.title,
-    required this.message,
-    required this.color,
-    required this.symbol,
-  });
-
-  final String title;
-  final String message;
-  final Color color;
-  final IconData symbol;
-}
-
-PriceDecision decidePrice(double usualPrice, double offeredPrice) {
-  if (usualPrice <= 0 || offeredPrice < 0) {
-    return const PriceDecision(
-      title: 'Agrega ambos precios',
-      message: 'Necesitamos una referencia para comparar.',
-      color: Color(0xff80716c),
-      symbol: Icons.info_outline,
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: scheme.surfaceContainerLowest,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: scheme.outlineVariant),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 15,
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: scheme.surface,
+        indicatorColor: scheme.primaryContainer,
+        height: 76,
+      ),
+      textTheme: const TextTheme(
+        headlineLarge: TextStyle(
+          fontSize: 32,
+          height: 1.15,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -1,
+        ),
+        headlineMedium: TextStyle(
+          fontSize: 26,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -.6,
+        ),
+        titleLarge: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
+        titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        bodyMedium: TextStyle(fontSize: 14, height: 1.45),
+      ),
     );
   }
 
-  final percent = (offeredPrice - usualPrice) / usualPrice;
-  double upper;
-  double lower;
-  if (usualPrice <= 40) {
-    lower = -0.15;
-    upper = 0.10;
-  } else if (usualPrice <= 100) {
-    lower = -0.15;
-    upper = 0.08;
-  } else if (usualPrice <= 200) {
-    lower = -0.15;
-    upper = 0.04;
-  } else if (usualPrice <= 500) {
-    lower = -0.10;
-    upper = 0.03;
-  } else if (usualPrice <= 1000) {
-    lower = -0.10;
-    upper = 0.02;
-  } else {
-    lower = -0.10;
-    upper = 0.01;
-  }
-
-  final difference = (percent * 100).abs().toStringAsFixed(1);
-  if (percent >= upper) {
-    return PriceDecision(
-      title: 'No lo compres',
-      message: 'Está $difference% arriba de tu margen.',
-      color: const Color(0xffb42318),
-      symbol: Icons.block,
-    );
-  }
-  if (percent <= lower) {
-    return PriceDecision(
-      title: '¡Cómpralo!',
-      message: 'Está $difference% más barato: es una gran oportunidad.',
-      color: const Color(0xff157347),
-      symbol: Icons.favorite,
-    );
-  }
-  return PriceDecision(
-    title: 'Compra autorizada',
-    message: percent == 0
-        ? 'Está al precio habitual.'
-        : 'Está dentro del margen seguro ($difference% de diferencia).',
-    color: const Color(0xff16803c),
-    symbol: Icons.verified,
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'Foráneo',
+    debugShowCheckedModeBanner: false,
+    theme: theme(Brightness.light),
+    darkTheme: theme(Brightness.dark),
+    themeMode: mode,
+    locale: const Locale('es', 'MX'),
+    supportedLocales: const [Locale('es', 'MX')],
+    localizationsDelegates: GlobalMaterialLocalizations.delegates,
+    home: ForaneoHome(
+      onTheme: (value) {
+        if (mounted && value != mode) setState(() => mode = value);
+      },
+    ),
   );
-}
-
-class RecipeApi {
-  const RecipeApi();
-
-  static const endpoint = String.fromEnvironment(
-    'RECIPES_API_URL',
-    defaultValue: 'http://localhost:8787/api/recipes',
-  );
-
-  Future<List<Recipe>> ask({
-    required List<AppProduct> products,
-    required String note,
-  }) async {
-    final pantry = products.where((product) => product.stock > 0).toList();
-    final ingredient = note.trim().isEmpty
-        ? (pantry.isEmpty ? 'ingredientes disponibles' : pantry.first.name)
-        : note.trim();
-    final response = await http
-        .post(
-          Uri.parse(endpoint),
-          headers: const {'content-type': 'application/json'},
-          body: jsonEncode({
-            'ingredient': ingredient,
-            'description': note.trim(),
-            'pantry': pantry.map((product) => product.name).toList(),
-            'count': 6,
-            'offset': 0,
-            'previousTitles': const [],
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('El servicio respondió con código ${response.statusCode}');
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map || decoded['recipes'] is! List) {
-      throw Exception('La respuesta de recetas no tiene el formato esperado.');
-    }
-    return (decoded['recipes'] as List)
-        .whereType<Map>()
-        .map((item) => Recipe.fromJson(Map<String, dynamic>.from(item)))
-        .toList();
-  }
 }
 
 class ForaneoHome extends StatefulWidget {
-  const ForaneoHome({super.key});
-
+  const ForaneoHome({super.key, required this.onTheme});
+  final ValueChanged<ThemeMode> onTheme;
   @override
   State<ForaneoHome> createState() => _ForaneoHomeState();
 }
 
-class _ForaneoHomeState extends State<ForaneoHome> {
-  static const _storageKey = 'foraneo_flutter_state_v1';
-
-  int _page = 0;
-  bool _loadingRecipes = false;
-  String? _recipeError;
-  final _recipeNote = TextEditingController();
-  final _usualPrice = TextEditingController(text: '20');
-  final _offeredPrice = TextEditingController(text: '20');
-
-  List<AppProduct> _products = _starterProducts();
-  List<TodoEntry> _todos = _starterTodos();
-  List<Recipe> _recipes = _starterRecipes();
-
+class _ForaneoHomeState extends State<ForaneoHome> with WidgetsBindingObserver {
+  LocalVault? vault;
+  bool loading = true,
+      authenticated = false,
+      notifications = false,
+      widgetSharing = false,
+      loadFailed = false;
+  String mode = 'system',
+      inventoryQuery = '',
+      category = 'Todo',
+      recipeQuery = '';
+  int section = 0, recipePage = 0;
+  bool settings = false, pantryOnly = false, favoritesOnly = false;
+  DateTime agendaDay = dayOnly(DateTime.now()),
+      mealWeek = monday(DateTime.now());
+  List<AppProduct> products = [];
+  List<TodoEntry> todos = [];
+  List<Recipe> customRecipes = [];
+  List<Map<String, dynamic>> catalog = [];
+  Map<String, String> meals = {};
+  Set<String> favorites = {};
+  Future<void> saveQueue = Future.value();
+  final searchController = TextEditingController();
+  static DateTime monday(DateTime date) =>
+      dayOnly(date).subtract(Duration(days: date.weekday - 1));
+  static const names = ['Inicio', 'Despensa', 'Compras', 'Cocina', 'Agenda'];
+  static const icons = [
+    Icons.cottage_outlined,
+    Icons.kitchen_outlined,
+    Icons.shopping_bag_outlined,
+    Icons.restaurant_menu,
+    Icons.calendar_month_outlined,
+  ];
   @override
   void initState() {
     super.initState();
-    unawaited(_restore());
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(boot());
   }
 
   @override
   void dispose() {
-    _recipeNote.dispose();
-    _usualPrice.dispose();
-    _offeredPrice.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    searchController.dispose();
     super.dispose();
   }
 
-  static List<AppProduct> _starterProducts() {
-    return [
-      AppProduct(
-        id: 'pasta',
-        name: 'Pasta',
-        description: 'Pasta seca para una comida rápida.',
-        category: 'Comida',
-        unit: 'paquete de 250 g',
-        stock: 2,
-        lowAt: 1,
-        referencePrice: 20,
-      ),
-      AppProduct(
-        id: 'jabon',
-        name: 'Jabón para manos',
-        description: 'Jabón líquido del baño.',
-        category: 'Baño',
-        unit: 'botella',
-        stock: 1,
-        lowAt: 1,
-        referencePrice: 48,
-      ),
-      AppProduct(
-        id: 'detergente',
-        name: 'Detergente',
-        description: 'Para ropa de color.',
-        category: 'Lavar',
-        unit: 'bolsa',
-        stock: 0,
-        lowAt: 1,
-        referencePrice: 125,
-      ),
-      AppProduct(
-        id: 'cafe',
-        name: 'Café',
-        description: 'Café molido.',
-        category: 'Cocina',
-        unit: 'bolsa',
-        stock: 1,
-        lowAt: 1,
-        referencePrice: 180,
-      ),
-    ];
-  }
-
-  static List<TodoEntry> _starterTodos() {
-    return [
-      TodoEntry(id: 't1', title: 'Revisar despensa', when: 'Hoy'),
-      TodoEntry(id: 't2', title: 'Planear comidas de la semana', when: 'Esta semana'),
-    ];
-  }
-
-  static List<Recipe> _starterRecipes() {
-    return [
-      Recipe(
-        title: 'Pasta al ajo y hierbas',
-        description: 'Una cena sencilla para aprovechar la pasta disponible.',
-        ingredients: const ['Pasta', 'Ajo', 'Aceite de oliva', 'Hierbas secas'],
-        steps: const [
-          'Hierve la pasta hasta que quede al dente.',
-          'Dora ligeramente el ajo en aceite.',
-          'Mezcla con la pasta y termina con hierbas.',
-        ],
-        minutes: '20 min',
-        servings: '2 porciones',
-        tag: 'Rápida',
-      ),
-    ];
-  }
-
-  Future<void> _restore() async {
-    try {
-      final preferences = await SharedPreferences.getInstance();
-      final saved = preferences.getString(_storageKey);
-      if (saved == null) return;
-      final decoded = jsonDecode(saved);
-      if (decoded is! Map) return;
-      final products = (decoded['products'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => AppProduct.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
-      final todos = (decoded['todos'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => TodoEntry.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
-      final recipes = (decoded['recipes'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Recipe.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
-      if (!mounted) return;
-      setState(() {
-        if (products.isNotEmpty) _products = products;
-        if (todos.isNotEmpty) _todos = todos;
-        if (recipes.isNotEmpty) _recipes = recipes;
-      });
-    } catch (_) {
-      // A damaged local cache must never keep the app from opening.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && authenticated) {
+      unawaited(launchSection());
     }
   }
 
-  Future<void> _store() async {
+  Future<void> boot() async {
     try {
-      final preferences = await SharedPreferences.getInstance();
-      await preferences.setString(
-        _storageKey,
-        jsonEncode({
-          'products': _products.map((product) => product.toJson()).toList(),
-          'todos': _todos.map((todo) => todo.toJson()).toList(),
-          'recipes': _recipes.map((recipe) => recipe.toJson()).toList(),
-        }),
-      );
+      final prefs = await SharedPreferences.getInstance();
+      vault = LocalVault(prefs);
+      catalog = await OfflineRecipes.load();
+      if (!vault!.hasProfile && (prefs.getBool('foraneo_guest_v2') ?? false)) {
+        await restore();
+        authenticated = true;
+      }
     } catch (_) {
-      // Storage is a convenience; the current session remains usable.
+      loadFailed = true;
+    }
+    if (mounted) setState(() => loading = false);
+    if (authenticated) {
+      unawaited(launchSection());
+      unawaited(restoreReminders());
     }
   }
 
-  void _persist() {
-    unawaited(_store());
-  }
-
-  void _setPage(int page) {
-    setState(() => _page = page);
-  }
-
-  void _changeStock(AppProduct product, int change) {
-    setState(() {
-      product.stock = (product.stock + change).clamp(0, 999).toInt();
-    });
-    _persist();
-  }
-
-  Future<void> _addProduct() async {
-    final product = await showDialog<AppProduct>(
-      context: context,
-      builder: (context) => const _ProductEditor(),
-    );
-    if (product == null || !mounted) return;
-    setState(() => _products.add(product));
-    _persist();
-  }
-
-  Future<void> _addTodo() async {
-    final controller = TextEditingController();
-    String when = 'Hoy';
-    final entry = await showDialog<TodoEntry>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Nuevo pendiente'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    decoration: const InputDecoration(labelText: '¿Qué necesitas hacer?'),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: when,
-                    decoration: const InputDecoration(labelText: 'Cuándo'),
-                    items: const [
-                      DropdownMenuItem(value: 'Hoy', child: Text('Hoy')),
-                      DropdownMenuItem(value: 'Esta semana', child: Text('Esta semana')),
-                    ],
-                    onChanged: (value) => setDialogState(() => when = value ?? 'Hoy'),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final title = controller.text.trim();
-                    if (title.isEmpty) return;
-                    Navigator.pop(
-                      dialogContext,
-                      TodoEntry(
-                        id: DateTime.now().microsecondsSinceEpoch.toString(),
-                        title: title,
-                        when: when,
-                      ),
-                    );
-                  },
-                  child: const Text('Guardar'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    controller.dispose();
-    if (entry == null || !mounted) return;
-    setState(() => _todos.add(entry));
-    _persist();
-  }
-
-  Future<void> _askForRecipes() async {
-    setState(() {
-      _loadingRecipes = true;
-      _recipeError = null;
-    });
-    try {
-      final results = await const RecipeApi().ask(
-        products: _products,
-        note: _recipeNote.text.trim(),
-      );
-      if (!mounted) return;
-      setState(() {
-        _recipes = [...results, ..._recipes];
-      });
-      _persist();
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _recipeError =
-            'No pudimos contactar a la IA. Inicia el servidor de Foráneo y configura RECIPES_API_URL.';
-      });
-    } finally {
-      if (mounted) setState(() => _loadingRecipes = false);
-    }
-  }
-
-  void _sendMissingToShopping(Recipe recipe) {
-    final existing = _products.map((item) => item.name.toLowerCase()).toSet();
-    final missing = recipe.ingredients
-        .where((ingredient) => !existing.contains(ingredient.toLowerCase()))
-        .toList();
-    if (missing.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Todos los ingredientes ya están registrados.')),
-      );
+  Map<String, dynamic> snapshot() => {
+    'version': 2,
+    'products': products.map((p) => p.toJson()).toList(),
+    'todos': todos.map((t) => t.toJson()).toList(),
+    'recipes': customRecipes.map((r) => r.toJson()).toList(),
+    'meals': meals,
+    'favorites': favorites.toList(),
+    'settings': {
+      'theme': mode,
+      'notifications': notifications,
+      'widgetSharing': widgetSharing,
+    },
+  };
+  Future<void> restore() async {
+    final data = await vault!.read();
+    if (data == null) {
+      products = [
+        AppProduct(
+          id: 'pasta',
+          name: 'Pasta',
+          description: 'Ejemplo · edítalo con tu compra real',
+          amount: 250,
+          unit: 'g',
+          stock: 2,
+          lowAt: 1,
+          referencePrice: 20,
+        ),
+        AppProduct(
+          id: 'avena',
+          name: 'Avena',
+          amount: 500,
+          unit: 'g',
+          stock: 1,
+          lowAt: 1,
+          referencePrice: 32,
+        ),
+        AppProduct(
+          id: 'jabon',
+          name: 'Jabón de manos',
+          category: 'Higiene',
+          amount: 250,
+          unit: 'ml',
+          stock: 0,
+          lowAt: 1,
+          referencePrice: 35,
+        ),
+      ];
+      todos = [];
+      customRecipes = [];
+      meals = {};
+      favorites = {};
       return;
     }
-    setState(() {
-      for (final ingredient in missing) {
-        _products.add(
-          AppProduct(
-            id: '${DateTime.now().microsecondsSinceEpoch}$ingredient',
-            name: ingredient,
-            description: 'Ingrediente pendiente de la receta ${recipe.title}',
-            category: 'Cocina',
-            unit: 'unidad',
-            stock: 0,
-            lowAt: 1,
-            referencePrice: 0,
-          ),
+    List<Map<String, dynamic>> entries(String key) => data[key] is List
+        ? (data[key] as List)
+              .whereType<Map>()
+              .map((v) => Map<String, dynamic>.from(v))
+              .toList()
+        : [];
+    // Empty saved collections are intentional: never resurrect starter data.
+    products = entries('products').map(AppProduct.fromJson).toList();
+    todos = entries('todos').map(TodoEntry.fromJson).toList();
+    customRecipes = entries(
+      'recipes',
+    ).map(Recipe.fromJson).where((r) => r.allowed).toList();
+    meals = data['meals'] is Map
+        ? (data['meals'] as Map).map((key, value) => MapEntry('$key', '$value'))
+        : {};
+    favorites = data['favorites'] is List
+        ? (data['favorites'] as List).map((v) => '$v').toSet()
+        : {};
+    final preferences = data['settings'] is Map ? data['settings'] as Map : {};
+    mode = ['light', 'dark', 'system'].contains(preferences['theme'])
+        ? '${preferences['theme']}'
+        : 'system';
+    notifications = preferences['notifications'] == true;
+    widgetSharing = preferences['widgetSharing'] == true;
+    widget.onTheme(ThemeMode.values.firstWhere((v) => v.name == mode));
+  }
+
+  Future<void> enter({bool guest = false}) async {
+    try {
+      if (guest) await vault!.preferences.setBool('foraneo_guest_v2', true);
+      await restore();
+      if (!mounted) return;
+      setState(() => authenticated = true);
+      await store();
+      await restoreReminders();
+      await launchSection();
+    } catch (_) {
+      snack('No se pudieron abrir tus datos. No se han sobrescrito.');
+    }
+  }
+
+  Future<void> store() {
+    final data = jsonDecode(jsonEncode(snapshot())) as Map<String, dynamic>;
+    saveQueue = saveQueue.then((_) async {
+      try {
+        await vault!.save(data);
+      } catch (_) {
+        snack(
+          'No se guardaron los cambios. Revisa el espacio disponible y exporta un respaldo.',
         );
       }
-      _page = 2;
     });
-    _persist();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${missing.length} ingrediente(s) enviado(s) a compras urgentes.')),
+    unawaited(updateWidgets());
+    return saveQueue;
+  }
+
+  void changed() {
+    setState(() {});
+    unawaited(store());
+  }
+
+  void snack(String text) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
+  }
+
+  Future<bool> confirm(String title, String body) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(body),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirmar'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+  List<AppProduct> get shopping =>
+      products.where((p) => p.stockState != StockState.enough).toList()
+        ..sort((a, b) => a.stock.compareTo(b.stock));
+  List<AppProduct> get urgent =>
+      products.where((p) => p.stockState == StockState.empty).toList();
+  List<String> get pantry => products
+      .where((p) => p.stock > 0 && p.category == 'Comida')
+      .map((p) => p.name)
+      .toList();
+  List<Map<String, dynamic>> get allRecipes => [
+    ...customRecipes.map((r) => r.toJson()),
+    ...catalog,
+  ];
+  Recipe? recipeById(String? id) {
+    if (id == null) return null;
+    for (final r in customRecipes) {
+      if (r.id == id) return r;
+    }
+    for (final r in catalog) {
+      if ('${r['id']}' == id) return Recipe.fromJson(r);
+    }
+    return null;
+  }
+
+  Future<void> launchSection() async {
+    final target = await NativeServices.takeLaunchSection();
+    final index = {
+      'summary': 0,
+      'home': 0,
+      'shopping': 2,
+      'compras': 2,
+      'kitchen': 3,
+      'cocina': 3,
+      'agenda': 4,
+    }[target];
+    if (mounted && index != null) {
+      setState(() {
+        section = index;
+        settings = false;
+      });
+    }
+  }
+
+  Future<void> updateWidgets() async {
+    final today = dateKey(DateTime.now());
+    final todayTasks = todos
+        .where((t) => !t.done && dateKey(t.date) == today)
+        .map((t) => '${timeLabel(t.date)} ${t.title}')
+        .take(5)
+        .join('\n');
+    final todayMeals = ['Desayuno', 'Comida', 'Cena']
+        .map((slot) {
+          final r = recipeById(meals['$today:$slot']);
+          return r == null ? '' : '$slot: ${r.title}';
+        })
+        .where((v) => v.isNotEmpty)
+        .join('\n');
+    final taskDays = <String, String>{}, mealDays = <String, String>{};
+    if (widgetSharing) {
+      for (final task
+          in (todos.where((t) => !t.done).toList()
+            ..sort((a, b) => a.date.compareTo(b.date)))) {
+        final key = dateKey(task.date),
+            line = '${timeLabel(task.date)} ${task.title}';
+        taskDays[key] = taskDays[key] == null
+            ? line
+            : '${taskDays[key]}\n$line';
+      }
+      for (final entry in meals.entries) {
+        final split = entry.key.split(':');
+        if (split.length != 2) continue;
+        final recipe = recipeById(entry.value);
+        if (recipe == null) continue;
+        final line = '${split[1]}: ${recipe.title}';
+        mealDays[split[0]] = mealDays[split[0]] == null
+            ? line
+            : '${mealDays[split[0]]}\n$line';
+      }
+    }
+    await NativeServices.updateWidget(
+      shopping: widgetSharing
+          ? shopping.map((p) => p.name).take(6).join('\n')
+          : 'Activa compartir en Ajustes',
+      urgent: widgetSharing ? urgent.map((p) => p.name).take(5).join('\n') : '',
+      tasks: widgetSharing ? todayTasks : 'Contenido privado',
+      meal: widgetSharing ? todayMeals : 'Contenido privado',
+      taskDays: taskDays,
+      mealDays: mealDays,
     );
   }
 
-  Future<void> _openVideo(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  Future<void> restoreReminders() async {
+    if (notifications && await NativeServices.requestNotifications()) {
+      for (final task in todos) {
+        if (task.done || !task.remind) {
+          await NativeServices.cancel(notificationId(task.id));
+        } else if (task.date.isAfter(DateTime.now())) {
+          await scheduleTask(task);
+        }
+        // Preserve overdue Android alarms: Doze may deliver them a little late.
+      }
+    }
+    await updateWidgets();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final destinations = const [
-      NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Resumen'),
-      NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Inventario'),
-      NavigationDestination(icon: Icon(Icons.shopping_bag_outlined), selectedIcon: Icon(Icons.shopping_bag), label: 'Compras'),
-      NavigationDestination(icon: Icon(Icons.restaurant_menu_outlined), selectedIcon: Icon(Icons.restaurant_menu), label: 'Cocina IA'),
-      NavigationDestination(icon: Icon(Icons.checklist_outlined), selectedIcon: Icon(Icons.checklist), label: 'Agenda'),
-    ];
-    final wide = MediaQuery.sizeOf(context).width >= 840;
-    final content = SafeArea(child: _buildPage());
-
-    if (wide) {
-      return Scaffold(
-        body: Row(
-          children: [
-            NavigationRail(
-              selectedIndex: _page,
-              onDestinationSelected: _setPage,
-              labelType: NavigationRailLabelType.all,
-              leading: const Padding(
-                padding: EdgeInsets.fromLTRB(12, 20, 12, 16),
-                child: _BrandMark(),
-              ),
-              destinations: destinations
-                  .map(
-                    (destination) => NavigationRailDestination(
-                      icon: destination.icon,
-                      selectedIcon: destination.selectedIcon,
-                      label: Text(destination.label),
-                    ),
-                  )
-                  .toList(),
-            ),
-            const VerticalDivider(width: 1),
-            Expanded(child: content),
-          ],
-        ),
+  Future<void> scheduleTask(TodoEntry task) async {
+    final id = notificationId(task.id);
+    await NativeServices.cancel(id);
+    if (notifications &&
+        !task.done &&
+        task.remind &&
+        task.date.isAfter(DateTime.now())) {
+      await NativeServices.schedule(
+        id: id,
+        title: 'Foráneo · ${task.title}',
+        body: task.notes.isEmpty ? 'Es momento de tu pendiente.' : task.notes,
+        date: task.date,
       );
     }
+  }
 
-    return Scaffold(
-      body: content,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _page,
-        onDestinationSelected: _setPage,
-        destinations: destinations,
+  void stockNotification(AppProduct product, StockState? previous) {
+    if (!notifications ||
+        product.stockState == previous ||
+        product.stockState == StockState.enough) {
+      return;
+    }
+    unawaited(
+      NativeServices.notify(
+        id: notificationId(product.id),
+        title: product.stockState == StockState.empty
+            ? 'Compra urgente · ${product.name}'
+            : 'Se está acabando · ${product.name}',
+        body: product.stockState == StockState.empty
+            ? 'Ya no tienes. Lo agregamos a compra urgente.'
+            : 'Te quedan ${product.stock}. Está en tu lista de compras.',
       ),
     );
   }
 
-  Widget _buildPage() {
-    switch (_page) {
-      case 0:
-        return _dashboard();
-      case 1:
-        return _inventory();
-      case 2:
-        return _shopping();
-      case 3:
-        return _kitchen();
-      case 4:
-        return _agenda();
-      default:
-        return _dashboard();
+  Future<void> editProduct([AppProduct? product, String name = '']) async {
+    final result = await showDialog<AppProduct>(
+      context: context,
+      builder: (_) => ProductEditor(
+        product: product,
+        name: name,
+        forShopping: section == 2,
+      ),
+    );
+    if (result == null || !mounted) return;
+    final previous = product?.stockState,
+        index = products.indexWhere((p) => p.id == result.id);
+    if (index < 0) {
+      products.add(result);
+    } else {
+      products[index] = result;
+    }
+    changed();
+    stockNotification(result, previous);
+    if (result.category == 'Comida') {
+      snack('Guardado. En Cocina puedes buscar recetas con ${result.name}.');
     }
   }
 
-  Widget _dashboard() {
-    final empty = _products.where((product) => product.stockState == StockState.empty).length;
-    final low = _products.where((product) => product.stockState == StockState.low).length;
-    final undone = _todos.where((todo) => !todo.done).length;
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const _PageHeading(
-          eyebrow: 'TU HOGAR, EN ORDEN',
-          title: 'Hola, foráneo',
-          subtitle: 'Tu despensa, tus compras y tu semana en un mismo lugar.',
-        ),
-        const SizedBox(height: 18),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            _MetricCard(
-              icon: Icons.priority_high,
-              label: 'Urgentes',
-              value: empty.toString(),
-              color: const Color(0xffb42318),
-            ),
-            _MetricCard(
-              icon: Icons.shopping_cart_outlined,
-              label: 'Por comprar',
-              value: low.toString(),
-              color: const Color(0xffc76a13),
-            ),
-            _MetricCard(
-              icon: Icons.task_alt,
-              label: 'Pendientes',
-              value: undone.toString(),
-              color: const Color(0xff3d7c55),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        const _SectionHeading(title: 'Alertas del hogar'),
-        const SizedBox(height: 8),
-        if (empty + low == 0)
-          const _EmptyHint(
-            icon: Icons.sentiment_satisfied_alt,
-            text: 'Todo está bajo control. No tienes faltantes por ahora.',
-          )
-        else
-          ..._products
-              .where((product) => product.stockState != StockState.enough)
-              .map(
-                (product) => _StockAlert(
-                  product: product,
-                  onTap: () => _setPage(2),
-                ),
-              ),
-        const SizedBox(height: 24),
-        const _SectionHeading(title: 'Hoy en tu agenda'),
-        const SizedBox(height: 8),
-        ..._todos
-            .where((todo) => todo.when == 'Hoy' && !todo.done)
-            .map((todo) => _TodoRow(todo: todo, onChanged: (value) {
-                  setState(() => todo.done = value ?? false);
-                  _persist();
-                })),
-        if (_todos.where((todo) => todo.when == 'Hoy' && !todo.done).isEmpty)
-          const _EmptyHint(icon: Icons.event_available, text: 'No hay pendientes para hoy.'),
-      ],
-    );
+  Future<void> deleteProduct(AppProduct product) async {
+    if (!await confirm(
+      '¿Eliminar ${product.name}?',
+      'Se quitará de la despensa y de compras. No se puede deshacer.',
+    )) {
+      return;
+    }
+    products.removeWhere((p) => p.id == product.id);
+    changed();
   }
 
-  Widget _inventory() {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        _PageHeading(
-          eyebrow: 'INVENTARIO',
-          title: 'Lo que tienes',
-          subtitle: 'Agrega foto, cantidad y el precio que pagas normalmente.',
-          action: FilledButton.icon(
-            onPressed: _addProduct,
-            icon: const Icon(Icons.add_a_photo_outlined),
-            label: const Text('Agregar producto'),
-          ),
-        ),
-        const SizedBox(height: 18),
-        ..._products.map(
-          (product) => _ProductCard(
-            product: product,
-            onDecrease: () => _changeStock(product, -1),
-            onIncrease: () => _changeStock(product, 1),
-          ),
-        ),
-      ],
-    );
+  void changeStock(AppProduct product, int delta) {
+    final previous = product.stockState;
+    product.stock = (product.stock + delta).clamp(0, 99999);
+    changed();
+    stockNotification(product, previous);
   }
 
-  Widget _shopping() {
-    final urgent = _products.where((product) => product.stockState == StockState.empty).toList();
-    final normal = _products.where((product) => product.stockState == StockState.low).toList();
-    final usual = double.tryParse(_usualPrice.text.replaceAll(',', '.')) ?? 0;
-    final offer = double.tryParse(_offeredPrice.text.replaceAll(',', '.')) ?? 0;
-    final decision = decidePrice(usual, offer);
-
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const _PageHeading(
-          eyebrow: 'COMPRAS INTELIGENTES',
-          title: 'Compra sin pagar de más',
-          subtitle: 'Foráneo aplica tu margen automáticamente según el costo habitual.',
-        ),
-        const SizedBox(height: 16),
-        Card(
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Comparador de precio', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _usualPrice,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(
-                          prefixText: r'$ ',
-                          labelText: 'Precio habitual',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _offeredPrice,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(
-                          prefixText: r'$ ',
-                          labelText: 'Precio de hoy',
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: decision.color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: decision.color.withValues(alpha: 0.4)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(decision.symbol, color: decision.color),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              decision.title,
-                              style: TextStyle(color: decision.color, fontWeight: FontWeight.bold),
-                            ),
-                            Text(decision.message),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        const _SectionHeading(title: 'Compra urgente'),
-        const SizedBox(height: 8),
-        if (urgent.isEmpty)
-          const _EmptyHint(icon: Icons.check_circle_outline, text: 'Nada agotado por ahora.')
-        else
-          ...urgent.map((product) => _ShoppingProduct(
-                product: product,
-                urgent: true,
-                onCompare: () {
-                  _usualPrice.text = product.referencePrice.toStringAsFixed(2);
-                  _offeredPrice.text = product.referencePrice.toStringAsFixed(2);
-                  setState(() {});
-                },
-              )),
-        const SizedBox(height: 20),
-        const _SectionHeading(title: 'Por comprar pronto'),
-        const SizedBox(height: 8),
-        if (normal.isEmpty)
-          const _EmptyHint(icon: Icons.inventory_outlined, text: 'No hay productos por terminarse.')
-        else
-          ...normal.map((product) => _ShoppingProduct(
-                product: product,
-                urgent: false,
-                onCompare: () {
-                  _usualPrice.text = product.referencePrice.toStringAsFixed(2);
-                  _offeredPrice.text = product.referencePrice.toStringAsFixed(2);
-                  setState(() {});
-                },
-              )),
-      ],
-    );
-  }
-
-  Widget _kitchen() {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const _PageHeading(
-          eyebrow: 'COCINA IA',
-          title: '¿Qué cocinamos hoy?',
-          subtitle: 'La IA considera lo que tienes y omite huevo revuelto y arroz tradicional.',
-        ),
-        const SizedBox(height: 14),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _recipeNote,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Antojo o ingredientes extra',
-                    hintText: 'Ej. algo rápido con pasta y verduras',
-                    prefixIcon: Icon(Icons.auto_awesome),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _loadingRecipes ? null : _askForRecipes,
-                    icon: _loadingRecipes
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome),
-                    label: Text(_loadingRecipes ? 'Buscando recetas...' : 'Pedir recetas a la IA'),
-                  ),
-                ),
-                if (_recipeError != null) ...[
-                  const SizedBox(height: 10),
-                  Text(_recipeError!, style: const TextStyle(color: Color(0xffb42318))),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 22),
-        const _SectionHeading(title: 'Tus recetas'),
-        const SizedBox(height: 8),
-        ..._recipes.map(
-          (recipe) => _RecipeCard(
-            recipe: recipe,
-            onSendMissing: () => _sendMissingToShopping(recipe),
-            onVideo: recipe.videoUrl.isEmpty ? null : () => _openVideo(recipe.videoUrl),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _agenda() {
-    final today = _todos.where((todo) => todo.when == 'Hoy').toList();
-    final week = _todos.where((todo) => todo.when != 'Hoy').toList();
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        _PageHeading(
-          eyebrow: 'AGENDA',
-          title: 'Tu semana, a tu ritmo',
-          subtitle: 'Marca lo terminado y deja espacio mental para lo importante.',
-          action: FilledButton.icon(
-            onPressed: _addTodo,
-            icon: const Icon(Icons.add_task),
-            label: const Text('Nuevo pendiente'),
-          ),
-        ),
-        const SizedBox(height: 18),
-        const _SectionHeading(title: 'Hoy'),
-        const SizedBox(height: 8),
-        if (today.isEmpty)
-          const _EmptyHint(icon: Icons.event_available, text: 'Tu día está libre.')
-        else
-          ...today.map((todo) => _TodoRow(todo: todo, onChanged: (value) {
-                setState(() => todo.done = value ?? false);
-                _persist();
-              })),
-        const SizedBox(height: 20),
-        const _SectionHeading(title: 'Esta semana'),
-        const SizedBox(height: 8),
-        if (week.isEmpty)
-          const _EmptyHint(icon: Icons.calendar_month, text: 'No hay pendientes semanales.')
-        else
-          ...week.map((todo) => _TodoRow(todo: todo, onChanged: (value) {
-                setState(() => todo.done = value ?? false);
-                _persist();
-              })),
-      ],
-    );
-  }
-}
-
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.home_rounded, color: Color(0xffbd5d38), size: 30),
-        SizedBox(height: 3),
-        Text('Foráneo', style: TextStyle(fontWeight: FontWeight.w800)),
-      ],
-    );
-  }
-}
-
-class _PageHeading extends StatelessWidget {
-  const _PageHeading({
-    required this.eyebrow,
-    required this.title,
-    required this.subtitle,
-    this.action,
-  });
-
-  final String eyebrow;
-  final String title;
-  final String subtitle;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      runSpacing: 12,
-      children: [
-        SizedBox(
-          width: 530,
+  Future<void> restock(AppProduct product) async {
+    final quantity = TextEditingController(text: '${product.lowAt + 1}'),
+        price = TextEditingController(text: '${product.referencePrice}'),
+        form = GlobalKey<FormState>();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (_) => EditorShell(
+        title: 'Compré ${product.name}',
+        saveLabel: 'Guardar compra',
+        onSave: () {
+          if (form.currentState!.validate()) Navigator.pop(context, true);
+        },
+        child: Form(
+          key: form,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                eyebrow,
-                style: const TextStyle(
-                  color: Color(0xffbd5d38),
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.2,
-                  fontSize: 12,
+              TextFormField(
+                controller: quantity,
+                keyboardType: TextInputType.number,
+                validator: (v) =>
+                    positiveNumber(v, allowZero: false, integer: true),
+                decoration: const InputDecoration(
+                  labelText: 'Paquetes comprados',
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(title, style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 5),
-              Text(subtitle, style: Theme.of(context).textTheme.bodyLarge),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: price,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                validator: (v) => positiveNumber(v),
+                decoration: const InputDecoration(
+                  labelText: 'Nuevo precio habitual por paquete',
+                  prefixText: '\$ ',
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Se suman a tu despensa y este precio queda como nueva referencia. Usa Comparar antes de comprar.',
+              ),
             ],
           ),
         ),
-        if (action != null) ...[action!],
-      ],
+      ),
+    );
+    if (result == true && mounted) {
+      final index = products.indexWhere((p) => p.id == product.id);
+      if (index >= 0) {
+        products[index] = AppProduct.fromJson({
+          ...product.toJson(),
+          'stock': (product.stock + parseWholeNumber(quantity.text)).clamp(
+            0,
+            99999,
+          ),
+          'referencePrice': double.parse(price.text.replaceAll(',', '.')),
+        });
+      }
+      changed();
+    }
+    quantity.dispose();
+    price.dispose();
+  }
+
+  Future<void> addMissing(Recipe recipe) async {
+    final missing = OfflineRecipes.missingIngredients(recipe.toJson(), pantry);
+    var added = 0;
+    for (final ingredient in missing) {
+      final index = recipe.ingredients.indexOf(ingredient);
+      final key = index >= 0 && index < recipe.ingredientKeys.length
+          ? recipe.ingredientKeys[index]
+          : OfflineRecipes.normalizeIngredient(ingredient);
+      if (products.any((p) => OfflineRecipes.ingredientMatches(key, p.name))) {
+        continue;
+      }
+      products.add(
+        AppProduct(
+          id: '${newId()}-$added',
+          name: key.isEmpty
+              ? ingredient
+              : '${key[0].toUpperCase()}${key.substring(1)}',
+          description: 'Para ${recipe.title}: $ingredient',
+          stock: 0,
+          category: 'Comida',
+        ),
+      );
+      added++;
+    }
+    changed();
+    snack(
+      added == 0
+          ? 'Los faltantes ya están en tus productos. Revisa sus cantidades.'
+          : '$added ingredientes agregados a compra urgente. Revisa las cantidades antes de comprar.',
     );
   }
-}
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
+  Future<void> editTask([TodoEntry? task]) async {
+    final result = await showDialog<TodoEntry>(
+      context: context,
+      builder: (_) => TodoEditor(todo: task, day: agendaDay),
+    );
+    if (result == null || !mounted) return;
+    final index = todos.indexWhere((t) => t.id == result.id);
+    if (index < 0) {
+      todos.add(result);
+    } else {
+      todos[index] = result;
+    }
+    changed();
+    await scheduleTask(result);
+    if (result.remind && !notifications) {
+      snack('Activa Notificaciones en Ajustes para recibir el recordatorio.');
+    }
+  }
 
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
+  Future<void> deleteTask(TodoEntry task) async {
+    if (!await confirm('¿Eliminar pendiente?', task.title)) return;
+    todos.removeWhere((t) => t.id == task.id);
+    changed();
+    await NativeServices.cancel(notificationId(task.id));
+  }
+
+  Future<void> external(Uri uri) async {
+    if (uri.scheme != 'https') {
+      snack('Este enlace no es seguro.');
+      return;
+    }
+    try {
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        snack('No se pudo abrir el navegador.');
+      }
+    } catch (_) {
+      snack('No se pudo abrir el enlace.');
+    }
+  }
+
+  void googleCalendar(TodoEntry task) {
+    String stamp(DateTime date) =>
+        '${date.toUtc().toIso8601String().replaceAll('-', '').replaceAll(':', '').split('.').first}Z';
+    unawaited(
+      external(
+        Uri.https('calendar.google.com', '/calendar/render', {
+          'action': 'TEMPLATE',
+          'text': task.title,
+          'details': task.notes,
+          'dates':
+              '${stamp(task.date)}/${stamp(task.date.add(const Duration(hours: 1)))}',
+        }),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 180,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+    if (loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (loadFailed) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.shield_outlined, size: 48),
+                const SizedBox(height: 16),
+                const Text(
+                  'No pudimos abrir el almacenamiento o el recetario. Tus datos no se han sobrescrito.',
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      loadFailed = false;
+                      loading = true;
+                    });
+                    unawaited(boot());
+                  },
+                  child: const Text('Reintentar'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    if (!authenticated) {
+      return AuthScreen(
+        vault: vault!,
+        onGuest: () => enter(guest: true),
+        onUnlocked: () => enter(),
+        onCreate: (username, password) async {
+          await restore();
+          await vault!.createProfile(username, password, snapshot());
+          await enter();
+        },
+      );
+    }
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: Image.asset('assets/logo.png', width: 38, height: 38),
+            ),
+            const SizedBox(width: 10),
+            const Text(
+              'Foráneo',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Ajustes',
+            onPressed: () => setState(() => settings = !settings),
+            icon: Icon(settings ? Icons.close : Icons.tune),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            if (wide)
+              NavigationRail(
+                selectedIndex: settings ? null : section,
+                onDestinationSelected: (i) => setState(() {
+                  section = i;
+                  settings = false;
+                }),
+                labelType: NavigationRailLabelType.all,
+                destinations: List.generate(
+                  names.length,
+                  (i) => NavigationRailDestination(
+                    icon: Icon(icons[i]),
+                    label: Text(names[i]),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1180),
+                  child: SingleChildScrollView(
+                    key: ValueKey(settings ? 'settings' : section),
+                    padding: EdgeInsets.fromLTRB(
+                      wide ? 30 : 18,
+                      12,
+                      wide ? 30 : 18,
+                      32,
+                    ),
+                    child: settings
+                        ? settingsPage()
+                        : [
+                            homePage,
+                            pantryPage,
+                            shoppingPage,
+                            kitchenPage,
+                            agendaPage,
+                          ][section](),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: wide
+          ? null
+          : NavigationBar(
+              selectedIndex: section,
+              onDestinationSelected: (i) => setState(() {
+                section = i;
+                settings = false;
+              }),
+              destinations: List.generate(
+                names.length,
+                (i) => NavigationDestination(
+                  icon: Icon(icons[i], size: 23),
+                  label: names[i],
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget heading(
+    String eyebrow,
+    String title,
+    String subtitle, {
+    Widget? action,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 22),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          eyebrow.toUpperCase(),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.primary,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(title, style: Theme.of(context).textTheme.headlineLarge),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        if (action != null)
+          Padding(padding: const EdgeInsets.only(top: 16), child: action),
+      ],
+    ),
+  );
+  Widget panel(Widget child, {EdgeInsets? padding}) => Card(
+    child: Padding(padding: padding ?? const EdgeInsets.all(20), child: child),
+  );
+  Widget empty(
+    IconData icon,
+    String title,
+    String description, {
+    Widget? action,
+  }) => panel(
+    Column(
+      children: [
+        const SizedBox(height: 12),
+        Icon(icon, size: 42, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(height: 14),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 8),
+        Text(description, textAlign: TextAlign.center),
+        if (action != null)
+          Padding(padding: const EdgeInsets.only(top: 14), child: action),
+        const SizedBox(height: 12),
+      ],
+    ),
+  );
+  Widget sectionTitle(String title, {Widget? action}) => Padding(
+    padding: const EdgeInsets.only(top: 24, bottom: 14),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ),
+        ?action,
+      ],
+    ),
+  );
+  Widget badge(String text, {Color? color}) {
+    final c = color ?? Theme.of(context).colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(50),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: c),
+      ),
+    );
+  }
+
+  Widget responsiveCards(List<Widget> children, {double minimum = 290}) =>
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final count = (constraints.maxWidth / minimum).floor().clamp(1, 3);
+          final width = (constraints.maxWidth - (count - 1) * 14) / count;
+          return Wrap(
+            spacing: 14,
+            runSpacing: 14,
+            children: children
+                .map((child) => SizedBox(width: width, child: child))
+                .toList(),
+          );
+        },
+      );
+  Widget homePage() {
+    final todayTasks =
+        todos
+            .where(
+              (task) =>
+                  dateKey(task.date) == dateKey(DateTime.now()) && !task.done,
+            )
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+    final picks = OfflineRecipes.recommend(
+      recipes: allRecipes,
+      pantry: pantry,
+      limit: 2,
+    ).map(Recipe.fromJson).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        heading(
+          shortDate(DateTime.now()),
+          'Hola, foráneo',
+          'Un poquito de orden. Mucho más hogar.',
+        ),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(color: Color(0xff0b3a31)),
+            child: Stack(
+              children: [
+                Positioned(
+                  right: -34,
+                  top: -40,
+                  child: Opacity(
+                    opacity: .32,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/photos/ensalada.jpg',
+                        width: 265,
+                        height: 265,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(26),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'TU CASA, CONTIGO',
+                        style: TextStyle(
+                          color: Color(0xffa9dac0),
+                          fontSize: 11,
+                          letterSpacing: 2,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      const SizedBox(
+                        width: 310,
+                        child: Text(
+                          'Vivir por tu cuenta,\nsentirte en casa.',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            height: 1.14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const SizedBox(
+                        width: 280,
+                        child: Text(
+                          'Tu despensa y tus planes en un lugar. Incluso sin internet.',
+                          style: TextStyle(color: Color(0xffe3eee7)),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xffd9efb9),
+                          foregroundColor: const Color(0xff163d30),
+                        ),
+                        onPressed: () => setState(() => section = 3),
+                        icon: const Icon(Icons.restaurant_menu, size: 18),
+                        label: const Text('¿Qué cocinamos hoy?'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        responsiveCards([
+          metric(
+            'En casa',
+            '${products.length}',
+            'productos registrados',
+            Icons.kitchen_outlined,
+          ),
+          metric(
+            'Urgentes',
+            '${urgent.length}',
+            'productos agotados',
+            Icons.shopping_bag_outlined,
+            alert: urgent.isNotEmpty,
+          ),
+          metric(
+            'Para hoy',
+            '${todayTasks.length}',
+            'pendientes por completar',
+            Icons.task_alt,
+          ),
+        ], minimum: 155),
+        sectionTitle(
+          'Lo que necesita tu hogar',
+          action: TextButton(
+            onPressed: () => setState(() => section = 2),
+            child: const Text('Ver compras'),
+          ),
+        ),
+        if (shopping.isEmpty)
+          empty(
+            Icons.check_circle_outline,
+            'Todo en orden',
+            'Tu despensa está por encima de los mínimos que configuraste.',
+          )
+        else
+          ...shopping
+              .take(3)
+              .map(
+                (p) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: panel(
+                    Row(
+                      children: [
+                        Icon(
+                          p.stock == 0
+                              ? Icons.error_outline
+                              : Icons.inventory_2_outlined,
+                          color: const Color(0xffbf4337),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                p.name,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              Text(
+                                p.stock == 0
+                                    ? 'Agotado · compra urgente'
+                                    : 'Quedan ${p.stock} · toca reponer',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Registrar compra',
+                          onPressed: () => restock(p),
+                          icon: const Icon(Icons.add_shopping_cart),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+        sectionTitle(
+          'Algo rico, sin complicarte',
+          action: TextButton(
+            onPressed: () => setState(() => section = 3),
+            child: const Text('Explorar'),
+          ),
+        ),
+        responsiveCards(picks.map(recipeCard).toList()),
+        sectionTitle('Tu día, a tu ritmo'),
+        if (todayTasks.isEmpty)
+          empty(
+            Icons.wb_sunny_outlined,
+            'Un espacio para ti',
+            'No hay pendientes para hoy.',
+            action: OutlinedButton(
+              onPressed: () {
+                agendaDay = dayOnly(DateTime.now());
+                editTask();
+              },
+              child: const Text('Añadir pendiente'),
+            ),
+          )
+        else
+          ...todayTasks.take(3).map(taskCard),
+      ],
+    );
+  }
+
+  Widget metric(
+    String title,
+    String value,
+    String subtitle,
+    IconData icon, {
+    bool alert = false,
+  }) => panel(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          icon,
+          color: alert
+              ? const Color(0xffbf4337)
+              : Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(height: 14),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+            color: alert ? const Color(0xffbf4337) : null,
+          ),
+        ),
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          subtitle,
+          style: TextStyle(
+            fontSize: 11,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    ),
+    padding: const EdgeInsets.all(18),
+  );
+  Widget pantryPage() {
+    final filtered = products
+        .where(
+          (p) =>
+              (category == 'Todo' || p.category == category) &&
+              normalized(
+                '${p.name} ${p.description}',
+              ).contains(normalized(inventoryQuery)),
+        )
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        heading(
+          'Tu despensa',
+          'Lo bueno de estar en casa.',
+          'Alimentos, higiene, limpieza y todo lo que hace funcionar tu hogar.',
+          action: FilledButton.icon(
+            onPressed: () => editProduct(),
+            icon: const Icon(Icons.add),
+            label: const Text('Añadir producto'),
+          ),
+        ),
+        TextField(
+          controller: searchController,
+          decoration: const InputDecoration(
+            hintText: 'Buscar producto o marca',
+            prefixIcon: Icon(Icons.search),
+          ),
+          onChanged: (v) => setState(() => inventoryQuery = v),
+        ),
+        const SizedBox(height: 16),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
           child: Row(
+            children: ['Todo', ...productCategories]
+                .map(
+                  (v) => Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(v),
+                      selected: category == v,
+                      onSelected: (_) => setState(() => category = v),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Text(
+          '${filtered.length} productos · toca editar para cambiar foto, precio o características',
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (filtered.isEmpty)
+          empty(
+            Icons.inventory_2_outlined,
+            'Tu despensa empieza aquí',
+            'Añade una compra o cambia los filtros para ver tus productos.',
+          )
+        else
+          responsiveCards(filtered.map((p) => productCard(p)).toList()),
+      ],
+    );
+  }
+
+  IconData categoryIcon(String value) => switch (value) {
+    'Comida' => Icons.restaurant_outlined,
+    'Higiene' => Icons.sanitizer_outlined,
+    'Lavar' => Icons.local_laundry_service_outlined,
+    'Baño' => Icons.bathtub_outlined,
+    'Tecnología' => Icons.devices_outlined,
+    'Cocina' => Icons.kitchen_outlined,
+    _ => Icons.cottage_outlined,
+  };
+  Widget productCard(AppProduct p, {bool buy = false}) {
+    final color = p.stockState == StockState.enough
+        ? Theme.of(context).colorScheme.primary
+        : const Color(0xffbf4337);
+    return panel(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(backgroundColor: color.withValues(alpha: 0.13), child: Icon(icon, color: color)),
-              const SizedBox(width: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  width: 72,
+                  height: 72,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primaryContainer.withValues(alpha: .65),
+                  child: p.photo != null
+                      ? Image.memory(
+                          p.photo!,
+                          fit: BoxFit.cover,
+                          cacheWidth: 216,
+                          errorBuilder: (_, error, stack) =>
+                              Icon(categoryIcon(p.category), size: 34),
+                        )
+                      : Icon(categoryIcon(p.category), size: 34),
+                ),
+              ),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(value, style: Theme.of(context).textTheme.headlineSmall),
-                    Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(
+                      p.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${p.presentation} · ${p.category}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '\$${p.referencePrice.toStringAsFixed(2)} MXN',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(title, style: Theme.of(context).textTheme.titleLarge);
-  }
-}
-
-class _EmptyHint extends StatelessWidget {
-  const _EmptyHint({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(children: [Icon(icon, color: const Color(0xff62806e)), const SizedBox(width: 10), Expanded(child: Text(text))]),
-      ),
-    );
-  }
-}
-
-class _StockAlert extends StatelessWidget {
-  const _StockAlert({required this.product, required this.onTap});
-
-  final AppProduct product;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final urgent = product.stockState == StockState.empty;
-    final color = urgent ? const Color(0xffb42318) : const Color(0xffc76a13);
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        leading: _ProductImage(product: product),
-        title: Text(product.name),
-        subtitle: Text(urgent ? 'Se acabó: pásalo a compra urgente.' : 'Quedan pocas existencias.'),
-        trailing: Icon(Icons.arrow_forward_ios, color: color, size: 18),
-      ),
-    );
-  }
-}
-
-class _ProductCard extends StatelessWidget {
-  const _ProductCard({
-    required this.product,
-    required this.onDecrease,
-    required this.onIncrease,
-  });
-
-  final AppProduct product;
-  final VoidCallback onDecrease;
-  final VoidCallback onIncrease;
-
-  @override
-  Widget build(BuildContext context) {
-    final state = product.stockState;
-    final color = switch (state) {
-      StockState.enough => const Color(0xff16803c),
-      StockState.low => const Color(0xffc76a13),
-      StockState.empty => const Color(0xffb42318),
-    };
-    final label = switch (state) {
-      StockState.enough => 'En casa',
-      StockState.low => 'Por terminarse',
-      StockState.empty => 'Agotado',
-    };
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            _ProductImage(product: product, size: 60),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(product.name, style: Theme.of(context).textTheme.titleMedium),
-                      _StatePill(label: label, color: color),
-                    ],
+              PopupMenuButton<String>(
+                tooltip: 'Opciones de ${p.name}',
+                onSelected: (v) {
+                  if (v == 'edit') editProduct(p);
+                  if (v == 'delete') deleteProduct(p);
+                  if (v == 'compare') compare(p);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Editar')),
+                  PopupMenuItem(
+                    value: 'compare',
+                    child: Text('Comparar precio'),
                   ),
-                  const SizedBox(height: 3),
-                  Text('${product.category} · ${product.description}'),
-                  const SizedBox(height: 5),
-                  Text(
-                    '${product.stock} ${product.unit} · habitual \$${product.referencePrice.toStringAsFixed(2)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+                  PopupMenuItem(value: 'delete', child: Text('Eliminar')),
                 ],
               ),
-            ),
-            Column(
-              children: [
-                IconButton(onPressed: onIncrease, icon: const Icon(Icons.add_circle_outline), tooltip: 'Agregar una unidad'),
-                IconButton(onPressed: onDecrease, icon: const Icon(Icons.remove_circle_outline), tooltip: 'Consumir una unidad'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProductImage extends StatelessWidget {
-  const _ProductImage({required this.product, this.size = 48});
-
-  final AppProduct product;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    if (product.photo != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Image.memory(product.photo!, width: size, height: size, fit: BoxFit.cover),
-      );
-    }
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: const Color(0xffffe8db),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Icon(_iconForCategory(product.category), color: const Color(0xffbd5d38)),
-    );
-  }
-
-  IconData _iconForCategory(String category) {
-    switch (category.toLowerCase()) {
-      case 'comida':
-      case 'cocina':
-        return Icons.restaurant;
-      case 'baño':
-      case 'higiene':
-        return Icons.bathroom_outlined;
-      case 'lavar':
-        return Icons.local_laundry_service_outlined;
-      case 'tecnología':
-        return Icons.devices_other_outlined;
-      default:
-        return Icons.inventory_2_outlined;
-    }
-  }
-}
-
-class _StatePill extends StatelessWidget {
-  const _StatePill({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-      child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 11)),
-    );
-  }
-}
-
-class _ShoppingProduct extends StatelessWidget {
-  const _ShoppingProduct({
-    required this.product,
-    required this.urgent,
-    required this.onCompare,
-  });
-
-  final AppProduct product;
-  final bool urgent;
-  final VoidCallback onCompare;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = urgent ? const Color(0xffb42318) : const Color(0xffc76a13);
-    return Card(
-      child: ListTile(
-        leading: Icon(urgent ? Icons.priority_high : Icons.shopping_cart_outlined, color: color),
-        title: Text(product.name),
-        subtitle: Text(product.referencePrice > 0 ? 'Referencia: \$${product.referencePrice.toStringAsFixed(2)}' : 'Añade un precio de referencia'),
-        trailing: TextButton(onPressed: onCompare, child: const Text('Comparar')),
-      ),
-    );
-  }
-}
-
-class _RecipeCard extends StatelessWidget {
-  const _RecipeCard({
-    required this.recipe,
-    required this.onSendMissing,
-    this.onVideo,
-  });
-
-  final Recipe recipe;
-  final VoidCallback onSendMissing;
-  final VoidCallback? onVideo;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ExpansionTile(
-        leading: const CircleAvatar(child: Icon(Icons.restaurant_menu)),
-        title: Text(recipe.title),
-        subtitle: Text('${recipe.tag} · ${recipe.minutes} · ${recipe.servings}'),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        children: [
-          Align(alignment: Alignment.centerLeft, child: Text(recipe.description)),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Ingredientes', style: Theme.of(context).textTheme.titleSmall),
+            ],
           ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: recipe.ingredients.map((ingredient) => Chip(label: Text(ingredient))).toList(),
+          if (p.description.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                p.description,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
+          badge(
+            p.stockState == StockState.empty
+                ? 'Agotado · compra urgente'
+                : p.stockState == StockState.low
+                ? 'Queda poco · por comprar'
+                : 'En casa · suficiente',
+            color: color,
           ),
           const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Instrucciones', style: Theme.of(context).textTheme.titleSmall),
-          ),
-          const SizedBox(height: 5),
-          ...recipe.steps.indexed.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Text('${item.$1 + 1}. ${item.$2}'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${p.stock} paquetes en casa',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Consumir uno de ${p.name}',
+                onPressed: p.stock == 0 ? null : () => changeStock(p, -1),
+                icon: const Icon(Icons.remove_circle_outline),
+              ),
+              IconButton(
+                tooltip: 'Sumar uno de ${p.name}',
+                onPressed: () => changeStock(p, 1),
+                icon: const Icon(Icons.add_circle_outline),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              OutlinedButton.icon(
-                onPressed: onSendMissing,
-                icon: const Icon(Icons.shopping_bag_outlined),
-                label: const Text('Enviar faltantes a compras'),
-              ),
-              if (onVideo != null)
-                TextButton.icon(
-                  onPressed: onVideo,
-                  icon: const Icon(Icons.ondemand_video_outlined),
-                  label: const Text('Ver video'),
+              if (buy)
+                FilledButton.icon(
+                  onPressed: () => restock(p),
+                  icon: const Icon(Icons.check, size: 18),
+                  label: const Text('Ya lo compré'),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: () => editProduct(p),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Editar'),
                 ),
+              TextButton(
+                onPressed: () => compare(p),
+                child: const Text('Comparar precio'),
+              ),
             ],
           ),
         ],
       ),
+      padding: const EdgeInsets.all(16),
     );
   }
-}
 
-class _TodoRow extends StatelessWidget {
-  const _TodoRow({required this.todo, required this.onChanged});
-
-  final TodoEntry todo;
-  final ValueChanged<bool?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: CheckboxListTile(
-        value: todo.done,
-        onChanged: onChanged,
-        title: Text(
-          todo.title,
-          style: TextStyle(decoration: todo.done ? TextDecoration.lineThrough : null),
+  Widget shoppingPage() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      heading(
+        'Compras con cabeza',
+        'Lo que hace falta.',
+        'Los productos con pocas existencias aparecen aquí automáticamente.',
+        action: FilledButton.icon(
+          onPressed: () => editProduct(),
+          icon: const Icon(Icons.add),
+          label: const Text('Añadir a compras'),
         ),
-        subtitle: Text(todo.when),
-        controlAffinity: ListTileControlAffinity.leading,
+      ),
+      panel(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.savings_outlined),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tu precio, en perspectiva',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Compara por el mismo contenido, aunque cambie el tamaño del paquete. Precio rojo: no comprar. Verde: autorizado. Una gran bajada merece aprovecharse.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      sectionTitle('Compra urgente · ${urgent.length}'),
+      if (urgent.isEmpty)
+        empty(
+          Icons.verified_outlined,
+          'Sin urgencias',
+          'No tienes productos agotados.',
+        )
+      else
+        responsiveCards(urgent.map((p) => productCard(p, buy: true)).toList()),
+      sectionTitle('Por comprar · ${shopping.length - urgent.length}'),
+      if (shopping.length == urgent.length)
+        empty(
+          Icons.shopping_basket_outlined,
+          'Un pendiente menos',
+          'Aquí verás los productos que todavía tienes, pero ya se están acabando.',
+        )
+      else
+        responsiveCards(
+          shopping
+              .where((p) => p.stock > 0)
+              .map((p) => productCard(p, buy: true))
+              .toList(),
+        ),
+      const SizedBox(height: 16),
+      const Text(
+        'Eliminar un producto en Compras también lo elimina de Despensa. Para conservarlo, registra una reposición. El margen superior para precios mayores de \$1,000 es 1%.',
+        style: TextStyle(fontSize: 12),
+      ),
+    ],
+  );
+  Future<void> compare(AppProduct p) async {
+    final offered = TextEditingController(),
+        amount = TextEditingController(text: '${p.amount}');
+    var unit = p.unit;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) {
+          final price = double.tryParse(offered.text.replaceAll(',', '.')),
+              quantity = double.tryParse(amount.text.replaceAll(',', '.'));
+          final equivalent = price == null || quantity == null
+              ? null
+              : comparablePrice(
+                  referenceAmount: p.amount,
+                  referenceUnit: p.unit,
+                  offeredAmount: quantity,
+                  offeredUnit: unit,
+                  offeredPrice: price,
+                );
+          final decision = equivalent == null
+              ? null
+              : decidePrice(p.referencePrice, equivalent);
+          return EditorShell(
+            title: '¿Conviene comprar?',
+            saveLabel: 'Listo',
+            onSave: () => Navigator.pop(dialogContext),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(p.name, style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(
+                  'Referencia: \$${p.referencePrice.toStringAsFixed(2)} por ${p.presentation}',
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: offered,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (_) => update(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Precio que ves hoy',
+                    prefixText: '\$ ',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: amount,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (_) => update(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Contenido ofrecido',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: unit,
+                        isExpanded: true,
+                        items: {...productUnits, unit}
+                            .map(
+                              (v) => DropdownMenuItem(value: v, child: Text(v)),
+                            )
+                            .toList(),
+                        onChanged: (v) => update(() => unit = v!),
+                        decoration: const InputDecoration(labelText: 'Unidad'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                if (decision != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: decision.color.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(decision.symbol, color: decision.color, size: 34),
+                        const SizedBox(height: 10),
+                        Text(
+                          decision.title,
+                          style: TextStyle(
+                            color: decision.color,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 23,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(decision.message),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Equivale a \$${equivalent!.toStringAsFixed(2)} por ${p.presentation}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  const Text(
+                    'Escribe un precio válido y un contenido mayor que cero. Las unidades deben ser compatibles.',
+                  ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Esta comparación no modifica tu precio habitual.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    offered.dispose();
+    amount.dispose();
+  }
+
+  String recipeImage(Recipe recipe) {
+    final name = recipe.image.split('/').last;
+    if ([
+      'pasta.jpg',
+      'avena.jpg',
+      'tacos.jpg',
+      'arroz.jpg',
+      'ensalada.jpg',
+    ].contains(name)) {
+      return 'assets/photos/$name';
+    }
+    final title = normalized(recipe.title);
+    return 'assets/photos/${title.contains('pasta')
+        ? 'pasta'
+        : title.contains('avena')
+        ? 'avena'
+        : title.contains('taco')
+        ? 'tacos'
+        : title.contains('arroz')
+        ? 'arroz'
+        : 'ensalada'}.jpg';
+  }
+
+  Widget recipeCard(Recipe recipe) {
+    final missing = recipe.missing(products);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => showRecipe(recipe),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Stack(
+              children: [
+                Image.asset(
+                  recipeImage(recipe),
+                  height: 150,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  cacheWidth: 700,
+                ),
+                Positioned(
+                  right: 10,
+                  top: 10,
+                  child: IconButton.filledTonal(
+                    tooltip: favorites.contains(recipe.id)
+                        ? 'Quitar de favoritos'
+                        : 'Guardar favorito',
+                    onPressed: () {
+                      favorites.contains(recipe.id)
+                          ? favorites.remove(recipe.id)
+                          : favorites.add(recipe.id);
+                      changed();
+                    },
+                    icon: Icon(
+                      favorites.contains(recipe.id)
+                          ? Icons.favorite
+                          : Icons.favorite_border,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  bottom: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xfff7f7ef),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: Text(
+                      recipe.minutes,
+                      style: const TextStyle(
+                        color: Color(0xff173d30),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    recipe.title,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${recipe.servings} porciones · ${recipe.ingredients.length} ingredientes',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  badge(
+                    missing.isEmpty
+                        ? 'Tienes los ingredientes*'
+                        : 'Faltan ${missing.length} ingredientes',
+                    color: missing.isEmpty ? null : const Color(0xffa05c14),
+                  ),
+                  const SizedBox(height: 12),
+                  const Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Ver paso a paso',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Icon(Icons.arrow_forward, size: 18),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
-}
 
-class _ProductEditor extends StatefulWidget {
-  const _ProductEditor();
-
-  @override
-  State<_ProductEditor> createState() => _ProductEditorState();
-}
-
-class _ProductEditorState extends State<_ProductEditor> {
-  final _name = TextEditingController();
-  final _description = TextEditingController();
-  final _unit = TextEditingController(text: 'pieza');
-  final _amount = TextEditingController(text: '1');
-  final _lowAt = TextEditingController(text: '1');
-  final _price = TextEditingController(text: '0');
-  String _category = 'Comida';
-  Uint8List? _photo;
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _description.dispose();
-    _unit.dispose();
-    _amount.dispose();
-    _lowAt.dispose();
-    _price.dispose();
-    super.dispose();
-  }
-
-  Future<void> _choosePhoto() async {
-    final selection = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
-    if (!mounted || selection == null || selection.files.isEmpty) return;
-    setState(() => _photo = selection.files.single.bytes);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Agregar producto'),
-      content: SingleChildScrollView(
-        child: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+  Widget kitchenPage() {
+    final source = allRecipes
+        .where(
+          (r) =>
+              (!favoritesOnly || favorites.contains('${r['id']}')) &&
+              (!pantryOnly ||
+                  OfflineRecipes.missingIngredients(r, pantry).isEmpty),
+        )
+        .toList();
+    final results = OfflineRecipes.recommend(
+      recipes: source,
+      query: recipeQuery,
+      pantry: pantry,
+      limit: 13,
+      offset: recipePage * 12,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        heading(
+          'Cocina local',
+          'Hoy se come rico.',
+          '${catalog.length} variantes detalladas, listas sin internet. Tu despensa nos ayuda a ordenarlas.',
+          action: OutlinedButton.icon(
+            onPressed: createRecipe,
+            icon: const Icon(Icons.add),
+            label: const Text('Agregar mi receta'),
+          ),
+        ),
+        panel(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GestureDetector(
-                onTap: _choosePhoto,
-                child: Container(
-                  height: 100,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: const Color(0xffffe8db),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  alignment: Alignment.center,
-                  child: _photo == null
-                      ? const Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.add_photo_alternate_outlined),
-                            SizedBox(height: 4),
-                            Text('Cargar foto del producto'),
-                          ],
-                        )
-                      : ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image.memory(_photo!, width: double.infinity, height: 100, fit: BoxFit.cover),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(controller: _name, decoration: const InputDecoration(labelText: 'Nombre')),
-              const SizedBox(height: 8),
-              TextField(controller: _description, decoration: const InputDecoration(labelText: 'Descripción')),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _category,
-                decoration: const InputDecoration(labelText: 'Categoría'),
-                items: const ['Comida', 'Higiene', 'Cocina', 'Baño', 'Lavar', 'Tecnología', 'Hogar']
-                    .map((category) => DropdownMenuItem(value: category, child: Text(category)))
-                    .toList(),
-                onChanged: (value) => setState(() => _category = value ?? 'Hogar'),
-              ),
-              const SizedBox(height: 8),
-              TextField(controller: _unit, decoration: const InputDecoration(labelText: 'Presentación, ej. 250 g')),
-              const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _amount,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Cantidad actual'),
-                    ),
-                  ),
+                  const Icon(Icons.auto_awesome_outlined),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: TextField(
-                      controller: _lowAt,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Avisar al quedar'),
+                    child: Text(
+                      '¿Qué se te antoja?',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               TextField(
-                controller: _price,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(prefixText: r'$ ', labelText: 'Precio habitual'),
+                key: const ValueKey('recipe-query'),
+                decoration: const InputDecoration(
+                  hintText: 'Ej. pasta con tomate, cena, avena…',
+                  prefixIcon: Icon(Icons.search),
+                ),
+                onChanged: (value) => setState(() {
+                  recipeQuery = value;
+                  recipePage = 0;
+                }),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: const Text('Con lo que tengo'),
+                    selected: pantryOnly,
+                    onSelected: (v) => setState(() {
+                      pantryOnly = v;
+                      recipePage = 0;
+                    }),
+                  ),
+                  FilterChip(
+                    label: const Text('Mis favoritos'),
+                    selected: favoritesOnly,
+                    onSelected: (v) => setState(() {
+                      favoritesOnly = v;
+                      recipePage = 0;
+                    }),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Buscador local por ingredientes, no IA generativa. No requiere API ni modelos pesados. Se excluyen huevo revuelto y similares, y arroz no asiático. *Comprueba cantidades y alérgenos antes de cocinar.',
+                style: TextStyle(fontSize: 12),
               ),
             ],
           ),
         ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-        FilledButton(
-          onPressed: () {
-            final name = _name.text.trim();
-            if (name.isEmpty) return;
-            Navigator.pop(
-              context,
-              AppProduct(
-                id: DateTime.now().microsecondsSinceEpoch.toString(),
-                name: name,
-                description: _description.text.trim(),
-                category: _category,
-                unit: _unit.text.trim().isEmpty ? 'pieza' : _unit.text.trim(),
-                stock: int.tryParse(_amount.text) ?? 0,
-                lowAt: int.tryParse(_lowAt.text) ?? 1,
-                referencePrice: double.tryParse(_price.text.replaceAll(',', '.')) ?? 0,
-                photo: _photo,
+        const SizedBox(height: 18),
+        mealPlanner(),
+        sectionTitle(
+          recipeQuery.isEmpty
+              ? 'Inspiración para tu mesa'
+              : 'Ideas para “$recipeQuery”',
+        ),
+        if (results.isEmpty)
+          empty(
+            Icons.manage_search,
+            'Busquemos otro antojo',
+            pantryOnly
+                ? 'No encontramos recetas con todos los ingredientes en tu despensa. Desactiva el filtro para ver faltantes.'
+                : 'Prueba un ingrediente diferente o agrega tu propia receta.',
+          )
+        else
+          responsiveCards(
+            results.take(12).map(Recipe.fromJson).map(recipeCard).toList(),
+          ),
+        if (recipePage > 0 || results.length > 12)
+          Padding(
+            padding: const EdgeInsets.only(top: 18),
+            child: Column(
+              children: [
+                Text('Página ${recipePage + 1}', textAlign: TextAlign.center),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: recipePage == 0
+                            ? null
+                            : () => setState(() => recipePage--),
+                        child: const Text('Anterior'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: results.length <= 12
+                            ? null
+                            : () => setState(() => recipePage++),
+                        child: const Text('Más ideas'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> createRecipe() async {
+    final recipe = await showDialog<Recipe>(
+      context: context,
+      builder: (_) => const RecipeEditor(),
+    );
+    if (recipe == null || !mounted) return;
+    customRecipes.add(recipe);
+    favorites.add(recipe.id);
+    changed();
+    showRecipe(recipe);
+  }
+
+  Future<void> showRecipe(Recipe recipe) async {
+    final checkedIngredients = <int>{}, checkedSteps = <int>{};
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) {
+          final missing = recipe.missing(products);
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 20,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'A cocinar, paso a paso',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Cerrar receta',
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Image.asset(
+                              recipeImage(recipe),
+                              width: double.infinity,
+                              height: 180,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            recipe.imageCaption.isEmpty
+                                ? 'Fotografía ilustrativa; el resultado puede variar.'
+                                : recipe.imageCaption,
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            recipe.title,
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(recipe.description),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              badge(recipe.minutes),
+                              badge('${recipe.servings} porciones'),
+                              badge(recipe.tag),
+                            ],
+                          ),
+                          if (recipe.allergens.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 16),
+                              child: Text(
+                                'Alérgenos indicados: ${recipe.allergens.join(', ')}. Revisa también las etiquetas y posibles trazas.',
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          if (recipe.equipment.isNotEmpty) ...[
+                            sectionTitle('Antes de empezar'),
+                            Text('Utensilios: ${recipe.equipment.join(', ')}.'),
+                          ],
+                          sectionTitle('Todos los ingredientes'),
+                          const Text(
+                            'Las cantidades son para las porciones indicadas. La despensa comprueba presencia, no cantidad restante.',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          ...recipe.ingredients.indexed.map(
+                            (entry) => CheckboxListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              value: checkedIngredients.contains(entry.$1),
+                              onChanged: (value) => update(() {
+                                value == true
+                                    ? checkedIngredients.add(entry.$1)
+                                    : checkedIngredients.remove(entry.$1);
+                              }),
+                              title: Text(
+                                entry.$2,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              subtitle: missing.contains(entry.$2)
+                                  ? const Text(
+                                      'Falta en despensa',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xffbf4337),
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ),
+                          if (missing.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: FilledButton.icon(
+                                onPressed: () async {
+                                  await addMissing(recipe);
+                                  update(() {});
+                                },
+                                icon: const Icon(Icons.add_shopping_cart),
+                                label: Text(
+                                  'A compras · ${missing.length} faltantes',
+                                ),
+                              ),
+                            ),
+                          sectionTitle('Preparación detallada'),
+                          Text(
+                            '${checkedSteps.length} de ${recipe.steps.length} pasos completados',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(height: 12),
+                          ...recipe.steps.indexed.map(
+                            (entry) => Padding(
+                              padding: const EdgeInsets.only(bottom: 14),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerLow,
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                padding: const EdgeInsets.all(14),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Checkbox(
+                                      value: checkedSteps.contains(entry.$1),
+                                      onChanged: (value) => update(() {
+                                        value == true
+                                            ? checkedSteps.add(entry.$1)
+                                            : checkedSteps.remove(entry.$1);
+                                      }),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'PASO ${entry.$1 + 1}',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: 1,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            entry.$2,
+                                            style: TextStyle(
+                                              height: 1.55,
+                                              decoration:
+                                                  checkedSteps.contains(
+                                                    entry.$1,
+                                                  )
+                                                  ? TextDecoration.lineThrough
+                                                  : null,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (recipe.notes.isNotEmpty) ...[
+                            sectionTitle('Consejos y conservación'),
+                            ...recipe.notes.map(
+                              (note) => Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Text('• $note'),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  favorites.contains(recipe.id)
+                                      ? favorites.remove(recipe.id)
+                                      : favorites.add(recipe.id);
+                                  changed();
+                                  update(() {});
+                                },
+                                icon: Icon(
+                                  favorites.contains(recipe.id)
+                                      ? Icons.favorite
+                                      : Icons.favorite_outline,
+                                ),
+                                label: Text(
+                                  favorites.contains(recipe.id)
+                                      ? 'Guardada'
+                                      : 'Guardar favorita',
+                                ),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () => planRecipe(recipe),
+                                icon: const Icon(Icons.calendar_month_outlined),
+                                label: const Text('Planear comida'),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () => external(
+                                  recipe.videoUrl.isNotEmpty
+                                      ? Uri.parse(recipe.videoUrl)
+                                      : Uri.https('www.youtube.com', '/results', {
+                                          'search_query':
+                                              '${recipe.title} receta paso a paso',
+                                        }),
+                                ),
+                                icon: const Icon(Icons.play_circle_outline),
+                                label: Text(
+                                  recipe.videoUrl.isNotEmpty
+                                      ? 'Abrir video'
+                                      : 'Buscar en YouTube',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'YouTube requiere internet. Los resultados de búsqueda no están verificados y pueden usar otros ingredientes.',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                          if (recipe.source.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 16),
+                              child: Text(
+                                recipe.source,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                            ),
+                          if (customRecipes.any((r) => r.id == recipe.id))
+                            TextButton.icon(
+                              onPressed: () async {
+                                if (!await confirm(
+                                  '¿Eliminar tu receta?',
+                                  'También se quitará de favoritos y del plan semanal.',
+                                )) {
+                                  return;
+                                }
+                                customRecipes.removeWhere(
+                                  (r) => r.id == recipe.id,
+                                );
+                                favorites.remove(recipe.id);
+                                meals.removeWhere(
+                                  (key, value) => value == recipe.id,
+                                );
+                                changed();
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext);
+                                }
+                              },
+                              icon: const Icon(Icons.delete_outline),
+                              label: const Text('Eliminar mi receta'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
-          child: const Text('Guardar producto'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget mealPlanner() => Card(
+    child: ExpansionTile(
+      shape: const Border(),
+      collapsedShape: const Border(),
+      title: const Text(
+        'Tu menú de la semana',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      subtitle: const Text('Desayuno, comida y cena · tú eliges'),
+      leading: const Icon(Icons.calendar_view_week),
+      childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+      children: [
+        Row(
+          children: [
+            IconButton(
+              tooltip: 'Semana anterior de cocina',
+              onPressed: () => setState(
+                () => mealWeek = mealWeek.subtract(const Duration(days: 7)),
+              ),
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Expanded(
+              child: Text(
+                '${shortDate(mealWeek)} — ${shortDate(mealWeek.add(const Duration(days: 6)))}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Semana siguiente de cocina',
+              onPressed: () => setState(
+                () => mealWeek = mealWeek.add(const Duration(days: 7)),
+              ),
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
+        ...List.generate(7, (index) {
+          final date = mealWeek.add(Duration(days: index));
+          return Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: panel(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    shortDate(date),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  ...['Desayuno', 'Comida', 'Cena'].map((slot) {
+                    final recipe = recipeById(meals['${dateKey(date)}:$slot']);
+                    return Row(
+                      children: [
+                        SizedBox(
+                          width: 72,
+                          child: Text(
+                            slot,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                        Expanded(
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                              ),
+                            ),
+                            onPressed: () => chooseMeal(date, slot),
+                            child: Text(
+                              recipe?.title ?? '+ Elegir receta',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                        if (recipe != null)
+                          IconButton(
+                            tooltip: 'Abrir receta de $slot',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => showRecipe(recipe),
+                            icon: const Icon(Icons.open_in_new, size: 17),
+                          ),
+                      ],
+                    );
+                  }),
+                ],
+              ),
+              padding: const EdgeInsets.all(12),
+            ),
+          );
+        }),
+      ],
+    ),
+  );
+  Future<void> chooseMeal(DateTime date, String slot) async {
+    var query = '';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) {
+          final options = OfflineRecipes.recommend(
+            recipes: allRecipes,
+            query: query,
+            pantry: pantry,
+            limit: 40,
+          );
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 28,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 550, maxHeight: 650),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$slot · ${shortDate(date)}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Cerrar selector',
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      decoration: const InputDecoration(
+                        hintText: 'Buscar una receta',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (value) => update(() => query = value),
+                    ),
+                    const SizedBox(height: 10),
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: options
+                            .map(
+                              (r) => ListTile(
+                                title: Text('${r['title']}'),
+                                subtitle: Text('${r['minutes']}'),
+                                onTap: () =>
+                                    Navigator.pop(dialogContext, '${r['id']}'),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                    if (options.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'Sin coincidencias. Prueba otro ingrediente.',
+                        ),
+                      ),
+                    TextButton.icon(
+                      onPressed: () => Navigator.pop(dialogContext, '#remove'),
+                      icon: const Icon(Icons.remove_circle_outline),
+                      label: const Text('Dejar esta comida sin plan'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (result == null || !mounted) return;
+    final key = '${dateKey(date)}:$slot';
+    if (result == '#remove') {
+      meals.remove(key);
+    } else {
+      meals[key] = result;
+    }
+    changed();
+  }
+
+  Future<void> planRecipe(Recipe recipe) async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (date == null || !mounted) return;
+    final slot = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('¿En qué momento?'),
+        children: ['Desayuno', 'Comida', 'Cena']
+            .map(
+              (s) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialogContext, s),
+                child: Text(s),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (slot == null || !mounted) return;
+    meals['${dateKey(date)}:$slot'] = recipe.id;
+    changed();
+    snack('${recipe.title} se agregó a $slot del ${shortDate(date)}.');
+  }
+
+  Widget taskCard(TodoEntry task) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: panel(
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: task.done,
+            onChanged: (value) {
+              task.done = value == true;
+              changed();
+              unawaited(scheduleTask(task));
+            },
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: () => editTask(task),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task.title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        decoration: task.done
+                            ? TextDecoration.lineThrough
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${shortDate(task.date)} · ${timeLabel(task.date)}${task.remind ? ' · recordatorio' : ''}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: !task.done && task.date.isBefore(DateTime.now())
+                            ? Theme.of(context).colorScheme.error
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (task.notes.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          task.notes,
+                          style: const TextStyle(fontSize: 12),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Opciones de ${task.title}',
+            onSelected: (action) {
+              if (action == 'edit') editTask(task);
+              if (action == 'delete') deleteTask(task);
+              if (action == 'calendar') googleCalendar(task);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('Editar pendiente')),
+              PopupMenuItem(
+                value: 'calendar',
+                child: Text('Agregar a Google Calendar'),
+              ),
+              PopupMenuItem(value: 'delete', child: Text('Eliminar pendiente')),
+            ],
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    ),
+  );
+  Widget agendaPage() {
+    final selectedTasks =
+        todos.where((task) => dateKey(task.date) == dateKey(agendaDay)).toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+    final start = monday(agendaDay);
+    final pending =
+        todos
+            .where((t) => !t.done && t.date.isBefore(dayOnly(DateTime.now())))
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        heading(
+          'Tu tiempo también es hogar',
+          'Un día a la vez.',
+          'Recordatorios, pequeños planes y cosas importantes.',
+          action: FilledButton.icon(
+            onPressed: () => editTask(),
+            icon: const Icon(Icons.add),
+            label: const Text('Añadir pendiente'),
+          ),
+        ),
+        calendar(),
+        const SizedBox(height: 8),
+        sectionTitle('El ${shortDate(agendaDay)}'),
+        if (selectedTasks.isEmpty)
+          empty(
+            Icons.event_available_outlined,
+            'Este día tiene espacio',
+            'Agrega un pendiente para esta fecha y elige si quieres recibir un recordatorio.',
+          )
+        else
+          ...selectedTasks.map(taskCard),
+        sectionTitle('Plan de la semana'),
+        ...List.generate(7, (index) {
+          final date = start.add(Duration(days: index));
+          final items =
+              todos.where((t) => dateKey(t.date) == dateKey(date)).toList()
+                ..sort((a, b) => a.date.compareTo(b.date));
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Card(
+              child: ExpansionTile(
+                shape: const Border(),
+                collapsedShape: const Border(),
+                initiallyExpanded: dateKey(date) == dateKey(agendaDay),
+                leading: CircleAvatar(
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.primaryContainer,
+                  child: Text(
+                    '${date.day}',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                title: Text(
+                  shortDate(date),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  '${items.where((t) => !t.done).length} por completar · ${items.where((t) => t.done).length} hechos',
+                ),
+                childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                children: [
+                  if (items.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text('Sin pendientes para este día.'),
+                    ),
+                  ...items.map(taskCard),
+                  TextButton.icon(
+                    onPressed: () {
+                      agendaDay = date;
+                      editTask();
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Agregar a este día'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        if (pending.isNotEmpty) ...[
+          sectionTitle('Pendientes de días anteriores'),
+          ...pending.take(12).map(taskCard),
+        ],
+        const SizedBox(height: 16),
+        panel(
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Tu agenda y Google Calendar',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'En las opciones de un pendiente elige “Agregar a Google Calendar”. Se abre un evento con su título, hora y notas para que confirmes guardarlo. Es una exportación de una sola vía: no lee ni sincroniza tu calendario. Evita guardarlo dos veces.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
         ),
       ],
     );
   }
+
+  Widget calendar() {
+    const monthNames = [
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre',
+    ];
+    final first = DateTime(agendaDay.year, agendaDay.month, 1),
+        days = DateTime(agendaDay.year, agendaDay.month + 1, 0).day,
+        offset = first.weekday - 1;
+    final cells = ((offset + days) / 7).ceil() * 7;
+    return panel(
+      Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Mes anterior',
+                onPressed: () => setState(
+                  () => agendaDay = DateTime(
+                    agendaDay.year,
+                    agendaDay.month - 1,
+                    1,
+                  ),
+                ),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: Text(
+                  '${monthNames[agendaDay.month - 1]} ${agendaDay.year}',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Mes siguiente',
+                onPressed: () => setState(
+                  () => agendaDay = DateTime(
+                    agendaDay.year,
+                    agendaDay.month + 1,
+                    1,
+                  ),
+                ),
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: ['L', 'M', 'M', 'J', 'V', 'S', 'D']
+                .map(
+                  (s) => Expanded(
+                    child: Text(
+                      s,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 8),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: cells,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7,
+              crossAxisSpacing: 3,
+              mainAxisSpacing: 3,
+              childAspectRatio: .92,
+            ),
+            itemBuilder: (context, index) {
+              final number = index - offset + 1;
+              if (number < 1 || number > days) return const SizedBox.shrink();
+              final date = DateTime(agendaDay.year, agendaDay.month, number),
+                  selected = number == agendaDay.day;
+              final hasTasks = todos.any(
+                (t) => dateKey(t.date) == dateKey(date) && !t.done,
+              );
+              return Semantics(
+                label:
+                    '${shortDate(date)}${hasTasks ? ', con pendientes' : ''}',
+                selected: selected,
+                button: true,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() => agendaDay = date),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                      borderRadius: BorderRadius.circular(12),
+                      border: dateKey(date) == dateKey(DateTime.now())
+                          ? Border.all(
+                              color: Theme.of(context).colorScheme.primary,
+                            )
+                          : null,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '$number',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: selected
+                                ? FontWeight.w800
+                                : FontWeight.normal,
+                            color: selected
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Container(
+                          width: 4,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: hasTasks
+                                ? (selected
+                                      ? Theme.of(context).colorScheme.onPrimary
+                                      : Theme.of(context).colorScheme.primary)
+                                : Colors.transparent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () =>
+                  setState(() => agendaDay = dayOnly(DateTime.now())),
+              child: const Text('Ir a hoy'),
+            ),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(12),
+    );
+  }
+
+  Future<void> setNotifications(bool value) async {
+    if (value && !await NativeServices.requestNotifications()) {
+      snack('No se concedió permiso. Actívalo en los ajustes del sistema.');
+      return;
+    }
+    if (!mounted) return;
+    notifications = value;
+    changed();
+    if (value) {
+      for (final task in todos) {
+        if (task.date.isAfter(DateTime.now())) await scheduleTask(task);
+      }
+    } else {
+      for (final task in todos) {
+        await NativeServices.cancel(notificationId(task.id));
+      }
+      for (final p in products) {
+        await NativeServices.cancel(notificationId(p.id));
+      }
+    }
+  }
+
+  Future<void> pinHomeWidget(String type) async {
+    await updateWidgets();
+    final accepted = await NativeServices.pinWidget(type: type);
+    if (!accepted) {
+      snack(
+        'Tu launcher no permite fijarlo directamente. Mantén pulsada la pantalla de inicio y busca Foráneo en Widgets.',
+      );
+    } else {
+      snack('Confirma la colocación del widget en tu pantalla de inicio.');
+    }
+  }
+
+  Future<void> lockProfile() async {
+    await saveQueue;
+    if (!mounted) return;
+    vault!.lock();
+    setState(() {
+      authenticated = false;
+      settings = false;
+      products = [];
+      todos = [];
+      customRecipes = [];
+      favorites = {};
+      meals = {};
+    });
+  }
+
+  Future<void> exportBackup() async {
+    if (!await confirm(
+      'Exportar respaldo sin cifrar',
+      'El archivo JSON contendrá tus productos, fotografías, recetas y agenda en texto legible. No incluye tu contraseña. Guárdalo en un lugar privado y no lo compartas públicamente.',
+    )) {
+      return;
+    }
+    try {
+      await saveQueue;
+      final bytes = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'format': 'foraneo-native-backup',
+            'version': 2,
+            'createdAt': DateTime.now().toIso8601String(),
+            'data': snapshot(),
+          }),
+        ),
+      );
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Guardar respaldo de Foráneo',
+        fileName: 'foraneo-respaldo-${dateKey(DateTime.now())}.json',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        bytes: bytes,
+      );
+      if (path != null) {
+        snack('Respaldo exportado. Consérvalo en un lugar privado.');
+      }
+    } catch (_) {
+      snack(
+        'No se pudo exportar el respaldo. Revisa el espacio disponible y los permisos.',
+      );
+    }
+  }
+
+  Future<void> importBackup() async {
+    try {
+      final selection = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        withData: true,
+      );
+      if (selection == null) return;
+      final bytes = selection.files.single.bytes;
+      if (bytes == null || bytes.length > 40 * 1024 * 1024) {
+        throw const FormatException('Archivo inválido o mayor a 40 MB.');
+      }
+      final envelope = jsonDecode(utf8.decode(bytes));
+      if (envelope is! Map ||
+          envelope['format'] != 'foraneo-native-backup' ||
+          envelope['version'] != 2 ||
+          envelope['data'] is! Map) {
+        throw const FormatException('No es un respaldo compatible.');
+      }
+      final data = Map<String, dynamic>.from(envelope['data'] as Map);
+      for (final key in ['products', 'todos', 'recipes']) {
+        if (data[key] is! List ||
+            (data[key] as List).length > 10000 ||
+            (data[key] as List).any((item) => item is! Map)) {
+          throw const FormatException('Datos inválidos.');
+        }
+      }
+      if (data['meals'] is! Map || data['favorites'] is! List) {
+        throw const FormatException('Datos inválidos.');
+      }
+      // Validate conversion before replacing any persisted state.
+      final checkedProducts = (data['products'] as List)
+          .map((p) => AppProduct.fromJson(Map<String, dynamic>.from(p as Map)))
+          .toList();
+      final checkedTodos = (data['todos'] as List)
+          .map((t) => TodoEntry.fromJson(Map<String, dynamic>.from(t as Map)))
+          .toList();
+      final checkedRecipes = (data['recipes'] as List)
+          .map((r) => Recipe.fromJson(Map<String, dynamic>.from(r as Map)))
+          .where((r) => r.allowed)
+          .toList();
+      data['products'] = checkedProducts.map((p) => p.toJson()).toList();
+      data['todos'] = checkedTodos.map((t) => t.toJson()).toList();
+      data['recipes'] = checkedRecipes.map((r) => r.toJson()).toList();
+      // Permissions and home-screen sharing never transfer silently from a file.
+      data['settings'] = {
+        'theme': mode,
+        'notifications': notifications,
+        'widgetSharing': widgetSharing,
+      };
+      if (!await confirm(
+        '¿Restaurar este respaldo?',
+        'Reemplazará tus ${products.length} productos y ${todos.length} pendientes actuales por ${checkedProducts.length} productos y ${checkedTodos.length} pendientes. Exporta antes si deseas conservarlos. Tu perfil y contraseña no cambian.',
+      )) {
+        return;
+      }
+      await saveQueue;
+      await vault!.save(data);
+      for (final task in todos) {
+        await NativeServices.cancel(notificationId(task.id));
+      }
+      await restore();
+      if (!mounted) return;
+      changed();
+      await restoreReminders();
+      snack('Respaldo restaurado correctamente.');
+    } catch (_) {
+      snack(
+        'No se pudo importar: usa un respaldo JSON de Foráneo nativo de menos de 40 MB. No se reemplazaron tus datos si el archivo era inválido.',
+      );
+    }
+  }
+
+  Widget settingsPage() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      heading(
+        'Así te gusta vivir',
+        'Ajustes de tu hogar.',
+        'Personaliza Foráneo y mantén el control de tus datos.',
+      ),
+      panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Apariencia', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            const Text(
+              'Elige la luz con la que se siente mejor tu hogar.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            LayoutBuilder(
+              builder: (context, constraints) => SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: 'light',
+                      icon: Icon(Icons.light_mode_outlined, size: 16),
+                      label: Text('Claro'),
+                    ),
+                    ButtonSegment(
+                      value: 'dark',
+                      icon: Icon(Icons.dark_mode_outlined, size: 16),
+                      label: Text('Oscuro'),
+                    ),
+                    ButtonSegment(
+                      value: 'system',
+                      icon: Icon(Icons.settings_brightness_outlined, size: 16),
+                      label: Text('Auto'),
+                    ),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (value) {
+                    mode = value.first;
+                    widget.onTheme(
+                      ThemeMode.values.firstWhere((v) => v.name == mode),
+                    );
+                    changed();
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      sectionTitle('Avisos que sí ayudan'),
+      panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: notifications,
+              onChanged: setNotifications,
+              title: const Text('Notificaciones'),
+              subtitle: const Text(
+                'Avisos al consumir productos y recordatorios de agenda.',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              NativeServices.isAndroid
+                  ? 'Android guarda los recordatorios localmente y puede mostrarlos con la app cerrada o tras reiniciar. Ahorro de batería y modo No molestar pueden retrasarlos. Los avisos de despensa dependen de que registres el consumo.'
+                  : 'En computadora los recordatorios requieren Foráneo abierto. El navegador y otras plataformas pueden limitar las notificaciones. Los avisos de despensa dependen de que registres el consumo.',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: notifications
+                      ? () async {
+                          await NativeServices.notify(
+                            id: 2147480000,
+                            title: 'Foráneo está listo',
+                            body:
+                                'Así recibirás tus avisos de despensa y agenda.',
+                          );
+                          snack('Aviso de prueba solicitado al sistema.');
+                        }
+                      : null,
+                  icon: const Icon(
+                    Icons.notifications_active_outlined,
+                    size: 18,
+                  ),
+                  label: const Text('Probar aviso'),
+                ),
+                if (NativeServices.isAndroid)
+                  TextButton(
+                    onPressed: NativeServices.openNotificationSettings,
+                    child: const Text('Permisos del sistema'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      sectionTitle('Tu hogar en la pantalla de inicio'),
+      panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: widgetSharing,
+              onChanged: (value) async {
+                if (value &&
+                    !await confirm(
+                      'Compartir contenido con widgets',
+                      'Los nombres de tus compras, pendientes y comidas se guardarán fuera del perfil cifrado para mostrarse en la pantalla de inicio, incluso con el perfil bloqueado. Puedes desactivarlo cuando quieras.',
+                    )) {
+                  return;
+                }
+                if (!mounted) return;
+                widgetSharing = value;
+                changed();
+              },
+              title: const Text('Compartir con mis widgets'),
+              subtitle: const Text(
+                'Una elección independiente del perfil privado.',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              NativeServices.isAndroid
+                  ? 'Widgets nativos de Android. El launcher decide el tamaño y solicita confirmar dónde colocarlos. Se actualizan al guardar y al cambiar de día.'
+                  : 'Los widgets nativos de pantalla de inicio están disponibles en el APK de Android. La web se puede instalar como PWA, pero no crea widgets del sistema.',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children:
+                  [
+                        ('summary', 'Resumen', Icons.cottage_outlined),
+                        ('shopping', 'Compras', Icons.shopping_bag_outlined),
+                        ('agenda', 'Agenda', Icons.calendar_month_outlined),
+                        ('kitchen', 'Cocina', Icons.restaurant_menu),
+                      ]
+                      .map(
+                        (entry) => OutlinedButton.icon(
+                          onPressed: NativeServices.isAndroid
+                              ? () => pinHomeWidget(entry.$1)
+                              : null,
+                          icon: Icon(entry.$3, size: 17),
+                          label: Text(entry.$2),
+                        ),
+                      )
+                      .toList(),
+            ),
+          ],
+        ),
+      ),
+      sectionTitle('Privacidad y acceso'),
+      panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.shield_outlined),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    vault!.hasProfile
+                        ? 'Perfil local · ${vault!.username}'
+                        : 'Modo invitado',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              vault!.hasProfile
+                  ? 'Tus datos se cifran en este dispositivo con AES-GCM y una clave derivada de tu contraseña. No existe cuenta en la nube, recuperación por correo ni sincronización automática. Los avisos autorizados del sistema y widgets compartidos pueden mostrar contenido fuera del cifrado.'
+                  : 'Tus datos se guardan solo en este dispositivo, sin cifrar en modo invitado. Puedes crear un perfil local con usuario y contraseña para protegerlos; se conservará tu información.',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: vault!.hasProfile
+                  ? lockProfile
+                  : () async {
+                      await saveQueue;
+                      if (!mounted) return;
+                      setState(() {
+                        authenticated = false;
+                        settings = false;
+                      });
+                    },
+              icon: Icon(
+                vault!.hasProfile ? Icons.lock_outline : Icons.person_add_alt,
+              ),
+              label: Text(
+                vault!.hasProfile
+                    ? 'Bloquear perfil / cerrar sesión'
+                    : 'Crear mi perfil local',
+              ),
+            ),
+          ],
+        ),
+      ),
+      sectionTitle('Tus datos, contigo'),
+      panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Respalda con frecuencia, especialmente antes de desinstalar o cambiar de dispositivo. Los respaldos JSON son legibles y no incluyen contraseña. Son para la app nativa; no sincronizan con la web.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: exportBackup,
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Exportar respaldo'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: importBackup,
+                  icon: const Icon(Icons.upload_file_outlined, size: 18),
+                  label: const Text('Importar respaldo'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      sectionTitle('Cocina y compras'),
+      panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Recetario sin servicios externos',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${catalog.length} variantes originales de bases culinarias. Recomendación determinista local, no IA generativa. Fotos ilustrativas. Las recetas no contemplan tus alergias individuales: revisa ingredientes y etiquetas.',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Preferencias activas: huevo únicamente hervido y arroz solo en preparaciones asiáticas. Las recetas personales pasan por el mismo filtro.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const Divider(height: 28),
+            const Text(
+              'Márgenes del comparador',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            ...[
+              ('Hasta \$40', '−15% / +10%'),
+              ('Hasta \$100', '−15% / +8%'),
+              ('Hasta \$200', '−15% / +4%'),
+              ('Hasta \$500', '−10% / +3%'),
+              ('Hasta \$1,000', '−10% / +2%'),
+              ('Más de \$1,000', '−10% / +1%'),
+            ].map(
+              (band) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        band.$1,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    Text(
+                      band.$2,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 30),
+      const Center(
+        child: Text(
+          'Foráneo · versión 2.0.0\nHecho para sentirte en casa.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12),
+        ),
+      ),
+      const SizedBox(height: 16),
+      const Center(
+        child: Text(
+          'by Joseph Ubaldo Trejo Hernandez',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 10),
+        ),
+      ),
+    ],
+  );
 }
